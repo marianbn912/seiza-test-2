@@ -1,0 +1,47 @@
+{
+  "name": "seiza-test-2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Serverless, deployer-owned reference architecture for self-hostable multiplayer WebXR. AGPL-3.0 with a commercial exemption available — see COMMERCIAL-LICENSE.md.",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/fetch-assets.mjs && tsc --noEmit && vite build && node scripts/ensure-kv-namespace.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run worker:deploy",
+    "fetch-assets": "node scripts/fetch-assets.mjs",
+    "generate:motions": "node scripts/generate-motions.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/extensions": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "@pixiv/three-vrm": "^3.4.2",
+    "@pixiv/three-vrm-animation": "^3.4.2",
+    "@react-three/drei": "^9.114.0",
+    "@react-three/fiber": "^8.17.10",
+    "@react-three/xr": "^6.2.3",
+    "@recast-navigation/three": "^0.43.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recast-navigation": "^0.43.1",
+    "three": "^0.169.0",
+    "troika-three-text": "^0.52.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.9",
+    "vitest": "^2.1.9",
+    "wrangler": "^3.80.0"
+  }
+}

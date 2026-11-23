@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Seiza</title>
+    <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+    <style>
+      html, body, #root { margin: 0; padding: 0; width: 100%; background: #111; }
+      html, body { height: 100%; }
+      /* svh (small viewport height) accounts for mobile browser chrome
+         (address bar, etc.) that plain vh/% doesn't — set on #root
+         specifically so every full-screen view in the app (JoinScreen,
+         the in-world HUD) inherits correct sizing from one place instead
+         of each needing its own fallback. Falls back to 100% on browsers
+         that don't support svh yet (the second declaration wins only if
+         supported). */
+      #root { height: 100%; height: 100svh; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

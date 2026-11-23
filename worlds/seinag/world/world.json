@@ -1,0 +1,29 @@
+{
+  "id": "seinag",
+  "displayName": "Seinag — UPOU under the Sun",
+  "displayNameJa": "Seinag — 太陽のUPOU",
+  "environment": "model",
+  "sceneUrl": "/worlds/seiou/models/campus.glb",
+  "navMeshUrl": "/worlds/seiou/models/campus.navmesh",
+  "sky": { "cycle": "realtime", "site": "manila", "weather": "auto", "vibrance": 1.35 },
+  "viewDistance": 700,
+  "spawnPoint": { "x": 66, "y": 0.2, "z": 0 },
+  "spawnRotationY": -1.5708,
+  "defaultAvatarUrl": "",
+  "maxOccupants": 16,
+  "voiceEnabled": true,
+  "editingEnabled": true,
+  "allowAvatarUpload": true,
+  "defaultAvatars": [
+    { "label": "Fumiriya", "url": "/avatars/vroid/sakurada-fumiriya.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" },
+    { "label": "Shino", "url": "/avatars/vroid/sendagaya-shino.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" },
+    { "label": "Sample A", "url": "/avatars/vroid/sample-female.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" },
+    { "label": "Sample B", "url": "/avatars/vroid/sample-male.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" }
+  ],
+  "customGestures": [],
+  "defaultObjects": [
+    {"kind": "screen", "position": [237.38, 3.55, 162.5], "rotationY": -2.2429},
+    {"kind": "screen", "position": [278.81, 6.65, -101.31], "rotationY": -0.7853981633974483},
+    {"kind": "text", "position": [280.65, 6.3, -96.64], "rotationY": -0.7853981633974483, "text": "CCDL Conference Hall · CCDL会議ホール\n- Click the screen to share yours · スクリーンをクリックして画面を共有\n- Sit at any table · どのテーブルにも座れます\n- Ask Chancy Joan or Dean Rob to bring others here · ガイドに頼むと、ほかの人をここへ案内できます"}
+  ]
+}

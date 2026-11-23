@@ -1,0 +1,150 @@
+{
+  "note": "What's new in Seiza, for visitors. Written by hand in plain words, each month with a one-line summary; home/build.mjs adds the commits made after `through` (see home/README.md), so a month can be rewritten here whenever it's worth it.",
+  "through": "2026-11-23T14:15:00+08:00",
+  "months": [
+    {
+      "month": "2026-11",
+      "summary": "Play comes to Seiza: Fantasy and Band modes, six new worlds, and avatars that move like people.",
+      "items": [
+        {
+          "tag": "new",
+          "text": "Fantasy mode: a sword, katana, naginata, scythe, light saber, bow, and a necromancer's rod that raises undead. Blades really parry, combos chain, and arrows can be dodged."
+        },
+        {
+          "tag": "new",
+          "text": "Six elements for specials, each with its own move and burst: Spectro, Havoc, Aero, Electro, Fusion, and Glacio."
+        },
+        {
+          "tag": "new",
+          "text": "Band mode: a drum kit, a taiko, keys, a kulintang's row of gongs, acoustic, lead, and bass guitars, a shaker, and light sticks, heard by the whole room."
+        },
+        {
+          "tag": "new",
+          "text": "Play an instrument by tapping it, and everyone sees the note light up. In VR, play with your hands."
+        },
+        {
+          "tag": "better",
+          "text": "Hold chords on the keys, pick melodies string by string on the guitars, and strike two drums at once with both hands."
+        },
+        {
+          "tag": "new",
+          "text": "Your record: knockouts, assists, falls, and best combo for every weapon, kept on your device."
+        },
+        {
+          "tag": "world",
+          "text": "Tulay, Seiza's Filipino home: a bahay kubo hall, beach cottages, and coconut palms."
+        },
+        {
+          "tag": "world",
+          "text": "ISCOLab, UP Open University's science communication lab, to walk through, under repair for now, with a kubo across the meadow for sessions."
+        },
+        {
+          "tag": "world",
+          "text": "SeiOU and Seinag: UP Open University's campus, with guides, live rooftop solar, and a permaculture garden tour."
+        },
+        {
+          "tag": "world",
+          "text": "Seisugbo, the Meiji × UP art exhibition with Tala as its guide, and Seizorai, where Ilaw-san explains the microgrid."
+        },
+        {
+          "tag": "better",
+          "text": "Fighters and musicians move their whole body, and no pose sticks after a mode ends."
+        },
+        {
+          "tag": "better",
+          "text": "More natural avatars: softer designer faces and eyes, real hair and clothes, and relaxed arms."
+        },
+        {
+          "tag": "better",
+          "text": "In VR, avatars lean, reach, and step like you, with a comfort vignette and admin tools on your wrist."
+        },
+        {
+          "tag": "better",
+          "text": "The VR wrist menu has every mode: weapons, instruments, light sticks, and, for editors, the switches that turn them on."
+        },
+        {
+          "tag": "better",
+          "text": "A beach, the sea, seasons, falling leaves, and rain with thunder."
+        },
+        {
+          "tag": "better",
+          "text": "English and Japanese everywhere, chat translation and guides included."
+        },
+        {
+          "tag": "better",
+          "text": "Portals between every world, and a way home from each."
+        }
+      ]
+    },
+    {
+      "month": "2026-10",
+      "summary": "Seizora and Seilaya open, the sky follows the real weather, and together gestures arrive.",
+      "items": [
+        {
+          "tag": "world",
+          "text": "Seizora, a solar, wind, and battery microgrid for a town in Cebu, with live readings and an El Niño scenario."
+        },
+        {
+          "tag": "world",
+          "text": "Seilaya, a safe spaces lab for learning about gender, safety, and respect."
+        },
+        {
+          "tag": "new",
+          "text": "A sky that follows the time and weather in the Philippines, and a room's own time and weather, set by its editors."
+        },
+        {
+          "tag": "new",
+          "text": "Handshakes, high fives, hugs, and a slow dance, which only happen when both people say yes."
+        },
+        {
+          "tag": "new",
+          "text": "VR body tracking and a wrist menu. You can also see your own body in first person."
+        },
+        {
+          "tag": "new",
+          "text": "Avaturn avatars, made ready in your browser, and a built-in avatar designer with expressions and lip sync."
+        },
+        {
+          "tag": "better",
+          "text": "The rooms came alive: a pond you can wade into, light switches, clocks, sliding shoji, a campsite, and a tent to sleep in."
+        },
+        {
+          "tag": "better",
+          "text": "Kneel in seiza long enough and your avatar starts to doze off (you can turn this off for meetings)."
+        },
+        {
+          "tag": "better",
+          "text": "Safer uploads and a sturdier room server."
+        }
+      ]
+    },
+    {
+      "month": "2026-09",
+      "summary": "Gestures, postures, boards, and screens.",
+      "items": [
+        {
+          "tag": "new",
+          "text": "Gestures, with a practice mode, and postures: sitting, and kneeling in seiza."
+        },
+        {
+          "tag": "new",
+          "text": "Boards to write on, screens to present on, an outdoor garden, and a custom sky."
+        },
+        {
+          "tag": "better",
+          "text": "Touch controls for phones, and a limit on how many people a room holds."
+        }
+      ]
+    },
+    {
+      "month": "2026-08",
+      "summary": "The first Seiza.",
+      "items": [
+        {
+          "tag": "new",
+          "text": "The first Seiza: multiplayer rooms you host on your own account, VRM avatars, voice, and editing the world together."
+        }
+      ]
+    }
+  ]
+}

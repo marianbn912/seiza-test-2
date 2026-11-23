@@ -1,0 +1,212 @@
+import { useRef, useState, type ReactNode } from "react";
+import { useExclusiveMenu } from "../ui/exclusiveMenu";
+import { useDismissOnOutside } from "../ui/useDismissOnOutside";
+import { panelStyle, pillButtonActiveStyle, pillButtonStyle, primaryButtonStyle, inputStyle } from "../ui/styles";
+import { ShieldIcon, CloseIcon, LockIcon } from "../ui/icons";
+import { L, useLang } from "../i18n/lang";
+
+interface AdminButtonProps {
+  isAdmin: boolean;
+  authPending: boolean;
+  authFailed: boolean;
+  onSubmit: (key: string) => void;
+  roomPasswordSet: boolean;
+  onSetRoomPassword: (password: string | null) => void;
+  /** More admin controls, after the room password (the room modes). */
+  children?: ReactNode;
+}
+
+/**
+ * A second way into the same admin gate EditToolbar.tsx uses when you try
+ * to enable Edit Mode (see App.tsx's canEditWorld / authLabel wiring) —
+ * placed next to the Avatar button so admin status doesn't have to be
+ * discovered by first attempting to edit the world. Only rendered by
+ * App.tsx at all when this deployment has SEIZA_ADMIN_KEY configured;
+ * with no key configured there is no admin concept to show a button for.
+ *
+ * Once signed in, this is also where the room entry password lives — see
+ * ADMIN.md for why that's a third, separate, runtime-settable secret
+ * rather than reusing the admin key or the editor password.
+ */
+export function AdminButton({ isAdmin, authPending, authFailed, onSubmit, roomPasswordSet, onSetRoomPassword, children }: AdminButtonProps) {
+  useLang();
+  const [open, setOpen] = useState(false);
+  useExclusiveMenu("admin", open, () => setOpen(false));
+  // Dismiss on an outside press without a backdrop in front of the
+  // page — see useDismissOnOutside for the bug that caused.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useDismissOnOutside(rootRef, open, () => setOpen(false));
+  const [draft, setDraft] = useState("");
+  const [roomPasswordDraft, setRoomPasswordDraft] = useState("");
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!draft) return;
+    onSubmit(draft);
+  };
+
+  const applyRoomPassword = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!roomPasswordDraft) return;
+    onSetRoomPassword(roomPasswordDraft);
+    setRoomPasswordDraft("");
+  };
+  const removeRoomPassword = () => {
+    onSetRoomPassword(null);
+    setRoomPasswordDraft("");
+  };
+
+  return (
+    <div ref={rootRef} className="seiza-admin-anchor" style={{ pointerEvents: "auto" }}>
+      <style>{ADMIN_CSS}</style>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{ ...(isAdmin ? pillButtonActiveStyle : pillButtonStyle), width: 36, height: 36, padding: 0, justifyContent: "center", flexShrink: 0 }}
+        aria-expanded={open}
+        aria-label={isAdmin ? L("Signed in as admin", "管理者としてサインイン中") : L("Sign in as admin", "管理者としてサインイン")}
+        title={isAdmin ? L("Signed in as admin", "管理者としてサインイン中") : L("Sign in as admin", "管理者としてサインイン")}
+      >
+        <ShieldIcon size={16} />
+      </button>
+
+      {open && (
+        <>
+          <div
+            className="seiza-popover-down seiza-admin-panel"
+            style={{
+              ...panelStyle,
+              position: "absolute",
+              top: "calc(100% + 8px)",
+              // Fits a phone: never wider than the screen less its gutters,
+              // and scrolls rather than running off the bottom.
+              width: "min(300px, calc(100vw - 32px))",
+              maxHeight: "calc(100svh - 96px)",
+              overflowY: "auto",
+              boxSizing: "border-box",
+              zIndex: 21,
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <ShieldIcon size={14} /> {L("Admin", "管理者")}
+              </strong>
+              <button type="button" onClick={() => setOpen(false)} style={{ ...pillButtonStyle, padding: 4 }} aria-label={L("Close", "閉じる")}>
+                <CloseIcon size={13} />
+              </button>
+            </div>
+
+            {!isAdmin ? (
+              <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <small style={{ opacity: 0.8 }}>{L("Enter the admin key to unlock world editing and moderation for this session.", "管理キーを入力すると、このセッションでワールドの編集とモデレーションができます。")}</small>
+                <input
+                  type="password"
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder={L("Admin key", "管理キー")}
+                  autoComplete="current-password"
+                  style={fieldStyle}
+                  autoFocus
+                />
+                {authFailed && <small style={{ color: "#ff8a80" }}>{L("Wrong key.", "キーが違います。")}</small>}
+                <button type="submit" style={primaryButtonStyle} disabled={authPending || !draft}>
+                  {authPending ? L("Checking…", "確認中…") : L("Unlock", "解除")}
+                </button>
+              </form>
+            ) : (
+              <>
+                <small style={{ opacity: 0.8 }}>
+                  {L(
+                    "You're signed in as admin for this session. This isn't remembered after you reload the page — see ADMIN.md if that surprises you.",
+                    "このセッションでは管理者としてサインインしています。ページを再読み込みすると解除されます(詳しくは ADMIN.md)。"
+                  )}
+                </small>
+
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.12)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <strong style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                    <LockIcon size={13} /> {L("Room entry password", "入室パスワード")}
+                  </strong>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 7,
+                      padding: "7px 10px",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      background: roomPasswordSet ? "rgba(124,255,158,0.1)" : "rgba(255,255,255,0.05)",
+                      border: `1px solid ${roomPasswordSet ? "rgba(124,255,158,0.35)" : "rgba(255,255,255,0.1)"}`,
+                    }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: roomPasswordSet ? "#7CFF9E" : "rgba(255,255,255,0.4)" }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      {roomPasswordSet ? L("On: people need the password to join.", "オン:参加にはパスワードが必要です。") : L("Off: anyone with the link can join.", "オフ:リンクを知っていれば誰でも参加できます。")}
+                    </span>
+                  </div>
+                  {/* Field above, buttons below, rather than side by side: an
+                      input has an intrinsic minimum width, and next to a button
+                      in a narrow panel it pushed the button out of the panel. */}
+                  <form onSubmit={applyRoomPassword} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <input
+                      type="text"
+                      value={roomPasswordDraft}
+                      onChange={(event) => setRoomPasswordDraft(event.target.value)}
+                      placeholder={roomPasswordSet ? L("New password", "新しいパスワード") : L("Choose a password", "パスワードを決める")}
+                      aria-label={roomPasswordSet ? L("New room password", "新しい入室パスワード") : L("Room password", "入室パスワード")}
+                      autoComplete="off"
+                      spellCheck={false}
+                      style={fieldStyle}
+                    />
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <button
+                        type="submit"
+                        disabled={!roomPasswordDraft}
+                        style={{ ...primaryButtonStyle, flex: "1 1 auto", padding: "8px 12px", fontSize: 13, opacity: roomPasswordDraft ? 1 : 0.5 }}
+                      >
+                        {roomPasswordSet ? L("Change password", "パスワードを変更") : L("Require password", "パスワードを設定")}
+                      </button>
+                      {/* Removing is its own button rather than "submit an
+                          empty field", which nobody would guess. */}
+                      {roomPasswordSet && (
+                        <button type="button" onClick={removeRoomPassword} style={{ ...pillButtonStyle, ...dangerStyle, flex: "1 1 auto", justifyContent: "center", padding: "8px 12px", fontSize: 13 }}>
+                          {L("Remove password", "パスワードを外す")}
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+                {children}
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const fieldStyle: React.CSSProperties = { ...inputStyle, width: "100%", minWidth: 0, boxSizing: "border-box" };
+const dangerStyle: React.CSSProperties = { color: "#ffb3ab", border: "1px solid rgba(255,138,128,0.4)", background: "rgba(255,138,128,0.08)" };
+
+/**
+ * The button lives in the top bar's centre cluster (TopCenterCluster.tsx),
+ * which does the positioning. The anchor itself stays unpositioned, so on
+ * wide screens the panel centres on the cluster, under the middle of the
+ * screen, like the other panels that drop from there.
+ *
+ * Phones: the panel docks full-width under the top bar like the other top
+ * menus (.seiza-popover-down in HUD.tsx), so the centring offset goes.
+ */
+const ADMIN_CSS = `
+  .seiza-admin-panel { left: 50%; margin-left: calc(min(300px, 100vw - 32px) / -2); transform-origin: top center; }
+  @media (max-width: 640px) {
+    .seiza-admin-panel { margin-left: 0; }
+  }
+`;

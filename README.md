@@ -1,0 +1,278 @@
+# 🌸 Seiza
+
+Seiza is a small 3D world that people can walk around in together from a web
+browser. It runs entirely on your own Cloudflare account, not on a server
+that someone else operates.
+
+<p align="center">
+  <img src="docs/media/hero.gif" width="720" alt="In Seiza's hall, a pink-haired, fan-made VRM avatar waves and then bows on the tatami, while two designer avatars kneel in seiza and doze, one of them bowing from seiza, and two more clap and cheer behind them.">
+</p>
+
+Pick a name and an avatar, open the link, and you are in a room with everyone
+else who opened it. Nothing to install, and no headset needed (though it
+works with one).
+
+Seiza is a self-hosted complement to hosted spaces such as FrameVR, not a
+replacement. It is smaller and plainer. In return, you get a room that nobody
+else can shut down, re-price, or take your data out of.
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/yesiamalex/Seiza)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+
+<p>
+  <a href="https://ko-fi.com/seizadeveloper"><img src="docs/media/buttons/kofi.png" height="40" alt="Support me on Ko-fi"></a>
+  <a href="https://github.com/sponsors/yesiamalex"><img src="docs/media/buttons/github-sponsors.png" height="40" alt="Sponsor on GitHub"></a>
+  <a href="DONATE.md#in-the-philippines"><img src="docs/media/buttons/gcash.png" height="40" alt="Send via GCash"></a>
+  <a href="DONATE.md#in-the-philippines"><img src="docs/media/buttons/bpi.png" height="40" alt="Send via BPI InstaPay"></a>
+</p>
+
+For the full guide, see [DOCS.md](DOCS.md).
+
+## 🏯 What you can do in a room
+
+- **Walk around** a hall, a classroom, and a garden, and sit on the chairs and
+  benches. Past the garden, steps lead down to a meadow and a campsite
+  where everyone arrives, just outside the tent as if they'd woken up: low
+  chairs round a crackling fire you can put out or light, sleeping bags to
+  lie down in, and the stars overhead at night.
+- **Talk.** Voices get quieter with distance, so two small conversations can
+  happen in one room.
+- **Use your camera or share your screen** onto one of the wall screens, for
+  example to show slides.
+- **Write on the notice boards**, hang pictures, and put up signs. Anyone in
+  the room can do this.
+- **Wave, bow, clap, raise your hand, kneel, crouch, or dance.** Your avatar's face
+  changes to match. If you kneel in seiza for a minute, your avatar nods off,
+  and then its legs fall asleep. You can turn this off in the Avatar menu for
+  meetings.
+- **Ask for a handshake, high five, fist bump, dap, hug, or slow dance.**
+  Stand near someone and ask from the Gestures menu. It only happens if they say yes; no answer
+  means no, and you can turn requests off. A slow dance lasts until either of
+  you stops.
+- **Chat by text** if you prefer not to talk.
+- **Rearrange the room** in Edit Mode, including replacing the whole
+  environment with your own 3D model. Your changes stay for the next person
+  who joins.
+- **Choose your look.** Build an avatar in the designer, pick a preset, or
+  upload your own VRM file.
+- **Watch the day go by.** The sky follows Philippine time and weather, from
+  a clear morning through rain to a starry night, and everyone in the room
+  sees the same sky.
+- **Play, when the host switches it on.** Fantasy mode hands out a sword, a
+  katana, a naginata, a scythe, a light saber, a bow, or a necromancer's rod
+  that raises undead, each with six elemental specials, combos, and a
+  record of knockouts kept on your device. Band mode hands out a drum kit,
+  a taiko, keys you can hold chords on, a kulintang's row of gongs,
+  guitars you can strum or pick a melody on, a bass, a shaker, and light
+  sticks, and the whole room hears and sees what you play. In a headset,
+  both are in the wrist menu, where an editor can switch them on too.
+
+<img src="docs/media/campsite.jpg" width="720" alt="Night at the campsite: an avatar sits in a low folding chair by a campfire under a sky full of stars, an orange tent with a sleeping bag inside to the left, and the hall's lamps glowing across the meadow.">
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/classroom.jpg" alt="The classroom from the back: students seated at desks, one raising a hand, the teacher at the chalkboard, and a presentation screen on the wall."></td>
+    <td width="50%"><img src="docs/media/garden.jpg" alt="The garden at dusk: an avatar wades in the pond among koi and lily pads, another sits on a bench, and a third stands by the water."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A class in the classroom</sub></td>
+    <td align="center"><sub>Wading in the garden pond</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/media/designer.jpg" alt="The avatar designer: a preview of a designed avatar with a happy expression, next to controls for presets, skin, body shape, and hair."></td>
+    <td width="50%"><img src="docs/media/uploaded-vrm.jpg" alt="A detailed anime-style VRM avatar with long pink hair waves on the tatami in the hall, while two designer avatars kneel in seiza and doze behind her."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Design your own avatar in the browser</sub></td>
+    <td align="center"><sub>Or bring a full VRM, like this fan-made model<sup>*</sup></sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/media/together-consent.gif" alt="Bea asks for a hug; a prompt reads 'Bea would like a hug' with Yes and No thanks. After Yes, the two step close, face each other, and hug."></td>
+    <td width="50%"><img src="docs/media/together-menu.jpg" alt="The Gestures menu, with a Together section offering a handshake, high five, hug, or slow dance to a nearby person, an 'Others may ask me' switch, and the built-in gestures including Dance."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A hug, only after a yes</sub></td>
+    <td align="center"><sub>Ask someone nearby from the Gestures menu</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/media/slow-dance.gif" alt="A slow dance seen through one dancer's eyes: Bea stands face to face at arm's length, both reaching for each other's hands, swaying side to side."></td>
+    <td width="50%"><img src="docs/media/dance.gif" alt="Bea dances on her own on the tatami: stepping side to side with bent knees, her arms swinging against her hips."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A slow dance, from your partner's eyes</sub></td>
+    <td align="center"><sub>Or dance on your own</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/media/fistbump-dap.gif" width="384" alt="Two avatars face each other: they fist bump, then dap, clasping hands high and releasing."></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>A fist bump and a dap, each after a yes</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/media/fantasy.gif" alt="Fantasy mode at night: a fighter with a katana swings twice and then lets go a fire special, flames and a column of light rising between them, while a white-haired necromancer casts a glowing bolt with a skull-topped rod and raises three small skeletons with glowing pink eyes that walk into the fight."></td>
+    <td width="50%"><img src="docs/media/band.gif" alt="Band mode at night: a taiko player, a guitarist with a black lead guitar, a drummer at a full kit, a keyboard player, and a kulintang player striking a row of gongs perform, while two fans in front wave a light stick in each hand, pink and blue, in time."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Fantasy mode: a katana's fire special against a necromancer's undead</sub></td>
+    <td align="center"><sub>Band mode: taiko, guitar, drums, keys, and kulintang, and the light sticks</sub></td>
+  </tr>
+</table>
+
+The same link works on a phone, a laptop, or a VR headset. In a headset, your
+avatar follows your head and hands, and turning your left palm toward you
+opens a menu for voice and gestures (in a phone viewer, look at Menu and
+tap, or keep looking).
+
+## 🔒 Why run it yourself
+
+Hosted worlds keep closing. Mozilla Hubs shut down in 2024, Ready Player Me
+in January 2026, and Spatial.io retired its free 3D worlds in July 2026. None
+of those closures had to do with whether people still used them.
+
+You, your school, or your club set up Seiza on your own Cloudflare account.
+Everything placed in a room, and everyone in it, lives on that account. The
+Seiza project does not run a server, so there is nothing in the middle.
+
+## 💸 What it costs
+
+For a class-sized room, it is usually free. Seiza fits in Cloudflare's free
+tiers, and audio and video travel directly between browsers instead of
+through your server.
+
+The one thing that can cost money is a TURN relay. It is only needed when two
+people's networks can't connect directly, and it is off until you turn it on.
+Cloudflare includes 1,000 GB per month before charging. See
+[Voice and video across networks](DOCS.md#voice-and-video-across-networks).
+
+The free plan covers about 7 hours a day of a full 16-person room. If you
+outgrow it, Cloudflare's $5-a-month plan covers about 1,100 person-hours a
+month, and every extra dollar about 7,400 more. See [Cost](DOCS.md#cost) for
+the tables.
+
+## 🚀 Run your own
+
+You don't need to write code, but you do need to run a few commands.
+
+```bash
+npm install
+npm run worker:deploy   # builds and deploys everything to your account
+```
+
+This deploys one Worker that serves the site, the upload API, and the
+real-time room server. The **Deploy to Cloudflare** button does the same
+thing, after first copying the repository into your GitHub account.
+
+- Full setup, configuration, and world customization: [DOCS.md](DOCS.md)
+- Other worlds from the same repository, each with its own features:
+  [Seizora](worlds/seizora/README.md), a solar, wind, and storage learning
+  world, [Seilaya](worlds/seilaya/README.md), a safe spaces lab for
+  learning about gender, safety, and respect, and
+  [Seisugbo](worlds/seisugbo/README.md), the Meiji × UP arts-based research
+  exhibition of 2026, in a model Cebu lane and covered court, with Tala, a
+  guide to the forum's Urbanity Walk and the research, and
+  [Seizorai](worlds/seizorai/README.md), Seizora with Ilaw-san, a guide
+  who answers questions offline, with guardrails, and
+  [SeiOU](worlds/seiou/README.md), a walkable digital twin of UP Open
+  University's campus, with two guides, and
+  [Seinag](worlds/seinag/README.md), the same campus with hypothetical
+  rooftop solar, running live
+- Hosting somewhere other than Cloudflare: [SELF-HOSTING.md](SELF-HOSTING.md)
+- What's protected, and a checklist for deployers: [SECURITY.md](SECURITY.md)
+
+## 🛡️ Who controls a room
+
+Anyone who joins can walk, talk, present, and write on boards. You can put
+room editing behind a password. If you set an **admin key**, whoever has it
+gets a participant list and can mute, remove, teleport to, or gather
+everyone. This is designed for a teacher running a class. See
+[ADMIN.md](ADMIN.md).
+
+Two limits apply:
+
+- Voice goes directly between browsers, so "mute" is a request that the other
+  browser follows. The server can't force it.
+- There are no user accounts, so removing someone ends their session but
+  doesn't stop them from rejoining.
+
+## 🚧 Known limitations
+
+Seiza works, but it isn't production-hardened yet.
+
+- Voice is a peer-to-peer mesh, so it suits rooms of about 12 people, not
+  large events.
+- Nothing has been load-tested with a full room.
+- "Admin" and "editor" are shared passwords, not individual logins.
+- There is no drawing whiteboard, no chat history, and no physics for placed
+  objects.
+- VR support is new and hasn't been tested on a real headset yet.
+
+For the complete list, including what each limit means for safety and
+moderation, see [Known limitations](DOCS.md#known-limitations) in DOCS.md.
+
+## 📚 Documentation
+
+| Document | Contents |
+|---|---|
+| [DOCS.md](DOCS.md) | Deployment, configuration, world customization, how it works, and known limitations |
+| [ADMIN.md](ADMIN.md) | Moderation: admin keys, room passwords, and what a host can and can't do |
+| [SELF-HOSTING.md](SELF-HOSTING.md) | Running Seiza somewhere other than Cloudflare |
+| [SECURITY.md](SECURITY.md) | What's protected, the deployer checklist, and known limits |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, the CLA, and the documentation style guide |
+| [THIRD_PARTY_ASSETS.md](THIRD_PARTY_ASSETS.md) | Asset licenses, including uploaded avatars |
+
+## 🤝 Support and services
+
+Seiza is free and open source. If it's useful to you, you can support its
+development through [Ko-fi](https://ko-fi.com/seizadeveloper), GitHub
+Sponsors, or, in the Philippines, GCash or BPI. See [DONATE.md](DONATE.md).
+
+<p>
+  <a href="https://ko-fi.com/seizadeveloper"><img src="docs/media/buttons/kofi.png" height="40" alt="Support me on Ko-fi"></a>
+  <a href="https://github.com/sponsors/yesiamalex"><img src="docs/media/buttons/github-sponsors.png" height="40" alt="Sponsor on GitHub"></a>
+  <a href="DONATE.md#in-the-philippines"><img src="docs/media/buttons/gcash.png" height="40" alt="Send via GCash"></a>
+  <a href="DONATE.md#in-the-philippines"><img src="docs/media/buttons/bpi.png" height="40" alt="Send via BPI InstaPay"></a>
+</p>
+
+If your school or organization would like its own deployment set up,
+customized (a different world, branding, or features), or maintained, without
+working with the code yourselves, this is available as a paid service. Email
+**seizadeveloper@gmail.com** to discuss what you need.
+
+This is separate from licensing. Running Seiza under the AGPL is free and
+needs no permission; [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) only
+matters if you want to use it in a closed-source product.
+
+## 👤 About the author
+
+Seiza is made by [Ziedell Alexander Figueroa](https://zafigueroa.vercel.app),
+a full-stack and XR developer in Cebu City: lecturer in the Department of
+Computer Science at the University of the Philippines Cebu, and consultant
+and researcher at UP Open University's ISCOLab. Its learning worlds grew out
+of work presented at the World Immersive Learning Labs Symposium (WILLS)
+2026, and out of earlier tools for immersive learning: Komprensible
+(an undergraduate thesis on Japanese language and culture in VR), Tourensible,
+and the ISCOLab dashboard.
+
+## ⚖️ License
+
+Seiza is dual-licensed:
+
+- **AGPL-3.0-or-later** ([LICENSE](LICENSE)) for open and self-hosted use.
+- A **commercial license** ([COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md))
+  for proprietary use.
+
+3D assets are licensed separately. See
+[THIRD_PARTY_ASSETS.md](THIRD_PARTY_ASSETS.md).
+
+The avatars in the GIF and screenshots were made with Seiza's built-in designer,
+plus the CC0 VRoid Studio sample "Sendagaya Shino" (pixiv Inc.) and the
+fan-made model credited below.
+
+<sup>*</sup> The pink-haired avatar is "Hitori 'Bocchi' Gotoh", a fan-made VRM by
+[@wawari_w](https://hub.vroid.com/en/users/42324143), of the character from *Bocchi the
+Rock!* (© Aki Hamaji / Houbunsha / Aniplex). It appears only in the GIF at
+the top and in this screenshot, from the maintainer's own copy, to show how an uploaded,
+artist-made VRM looks in Seiza. The model is **not** included in this
+repository or in any deployment, and its license doesn't allow
+redistribution or corporate commercial use. Seiza isn't affiliated with or
+endorsed by the model's author or the rights holders.

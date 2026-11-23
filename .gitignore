@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.wrangler/
+*.log
+
+# Secrets. .env.example is the committed template and is deliberately
+# re-included below; everything else matching these patterns stays local.
+# Production secrets should live in Worker secrets (`wrangler secret put`,
+# or the Cloudflare dashboard) rather than in any file here — see ADMIN.md.
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.env.example
+
+# Third-party models fetched at build time by scripts/fetch-assets.mjs
+# (see THIRD_PARTY_ASSETS.md); not committed.
+public/avatars/vroid/
+
+# A world's original media (photos, the campus model), kept local: each
+# world's scripts/ turn them into the small files it serves (committed).
+worlds/*/media-src/
+
+# home.seiza.cc: written by home/build.mjs at deploy.
+home/public/index.html
+home/public/sitemap.xml
+home/public/news.mjs
+home/public/media/

@@ -1,0 +1,67 @@
+{
+  // Cloudflare Workers config for the whole app: static frontend,
+  // avatar-upload API, and the realtime room server — one deploy, one
+  // Worker. This is what a "Deploy to Cloudflare" button targets.
+  //
+  // This used to be two pieces (this Worker, plus a separately-deployed
+  // PartyKit room server) because porting the room server into a
+  // directly-bound Durable Object hinged on verifying the DO WebSocket
+  // Hibernation API against current Cloudflare docs before relying on
+  // it. That's since been done — see worker/room.ts — and PartyKit
+  // turned out to be a bigger problem than "unverified": its last real
+  // release was over a year old, and its dev CLI has an unfixed Windows
+  // path bug that broke local development entirely on some machines.
+  "name": "seiza-test-2",
+  "compatibility_date": "2026-01-01",
+  "main": "worker/index.ts",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "durable_objects": {
+    "bindings": [
+      // The realtime room server (worker/room.ts) — one DO instance per
+      // world/room id (see src/multiplayer/useRoomSocket.ts), routed to
+      // via idFromName so the same room id always reaches the same
+      // instance.
+      { "name": "ROOMS", "class_name": "SeizaRoom" }
+    ]
+  },
+  "migrations": [
+    // Required the first time a Durable Object class is introduced.
+    // new_sqlite_classes (vs. the older new_classes) is the
+    // Cloudflare-recommended default for new DOs — see
+    // https://developers.cloudflare.com/durable-objects/reference/data-location/
+    // before changing this; migrating an already-deployed class's
+    // storage backend after the fact is not a simple config edit.
+    { "tag": "v1", "new_sqlite_classes": ["SeizaRoom"] }
+  ],
+  "kv_namespaces": [
+    // Stores user-uploaded .vrm avatars (see worker/index.ts and
+    // src/ui/JoinScreen.tsx). KV over R2 specifically because R2
+    // requires a payment method on file to activate at all, even for
+    // free-tier usage — not what a "fork and deploy for free" project
+    // should require. Unlike an R2 bucket_name, a KV namespace is
+    // referenced by an opaque id that has to exist before `wrangler
+    // deploy` can bind to it, so the placeholder below is real: `npm run
+    // build` runs scripts/ensure-kv-namespace.mjs, which looks up (or
+    // creates, on first run) a namespace titled "seiza-avatars" and
+    // patches this file's id in place before the deploy step runs.
+    // That lookup-by-title happens fresh on every build — including a
+    // brand new checkout on Cloudflare's Git-connected pipeline, which
+    // never sees this rewritten value committed back — so it stays
+    // idempotent (reuses the same namespace) without needing to persist
+    // anything to git. You can hardcode your own real id here instead
+    // once you have one; the script no-ops if it finds one already set.
+    { "binding": "AVATARS", "id": "34fa3b14e7f44de6b7b68f6f7f3e7d86" }
+  ],
+  // Keep variables set in the dashboard (Settings > Variables and Secrets),
+  // such as SEIZA_CANONICAL_ORIGIN, when a deploy from git runs: without
+  // this, a deploy keeps only the vars listed below.
+  "keep_vars": true,
+  "vars": {
+    "SEIZA_WORLD_ID": "default",
+    "SEIZA_MAX_OCCUPANTS": "16"
+  }
+}

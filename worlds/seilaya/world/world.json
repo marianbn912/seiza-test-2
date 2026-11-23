@@ -1,0 +1,23 @@
+{
+  "id": "seilaya",
+  "displayName": "Seilaya — Safe Spaces Lab",
+  "displayNameJa": "Seilaya — セーフスペース・ラボ",
+  "sky": { "cycle": "realtime", "site": "manila", "weather": "auto" },
+  "spawnPoint": { "x": -13.03, "y": -0.6, "z": 58.35 },
+  "spawnRotationY": -1.4,
+  "defaultAvatarUrl": "",
+  "maxOccupants": 16,
+  "voiceEnabled": true,
+  "editingEnabled": true,
+  "allowAvatarUpload": true,
+  "defaultAvatars": [
+    { "label": "Fumiriya", "url": "/avatars/vroid/sakurada-fumiriya.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" },
+    { "label": "Shino", "url": "/avatars/vroid/sendagaya-shino.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" },
+    { "label": "Sample A", "url": "/avatars/vroid/sample-female.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" },
+    { "label": "Sample B", "url": "/avatars/vroid/sample-male.vrm", "author": "pixiv Inc. (VRoid Studio sample)", "license": "CC0 1.0", "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/" }
+  ],
+  "customGestures": [],
+  "defaultObjects": [
+    { "kind": "screen", "position": [-11.5, 2.2, 7.5], "rotationY": 1.5708 }
+  ]
+}

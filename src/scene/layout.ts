@@ -1,0 +1,985 @@
+import * as THREE from "three";
+
+/**
+ * The floor plan of the built-in world, in one place, because three
+ * different systems have to agree on it: the geometry (BaseEnvironment.tsx),
+ * where a player is allowed to walk (PlayerRig.tsx), and where a player can
+ * sit (the seats below).
+ *
+ * Two rooms joined by a corridor:
+ *
+ *        z = 16  ┌──────────────────────┐
+ *                │        HALL          │   benches around a tatami
+ *        z = -4  └────────┐   ┌─────────┘   platform, reception desk
+ *                         │ C │               C = corridor with lockers
+ *        z = -10 ┌────────┘   └─────────┐
+ *                │      CLASSROOM       │   desks facing a chalkboard
+ *        z = -24 └──────────────────────┘
+ *
+ * Everything is generated from code, so there are still no bundled 3D
+ * assets to license (see THIRD_PARTY_ASSETS.md).
+ */
+
+export interface Rect {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+export const HALL: Rect = { minX: -12, maxX: 12, minZ: -4, maxZ: 16 };
+/** Bounded garden beyond the hall entrance. */
+export const OUTDOOR: Rect = { minX: -10, maxX: 10, minZ: 16, maxZ: 38 };
+
+/** The garden pond: centre (x, z) and outer rim radius. */
+export const POND_CENTER: [number, number] = [0, 27];
+export const POND_RADIUS = 2.9;
+/** Radius of the open water, inside the ring of rocks and moss. */
+export const POND_WATER_RADIUS = POND_RADIUS - 0.32;
+/** How deep the pond is in the middle: about calf height on an avatar. */
+export const POND_DEPTH = 0.38;
+/** Height of the water's surface, a little below the surrounding ground. */
+export const POND_WATER_Y = -0.04;
+
+/**
+ * Ground height inside the pond: level ground at the water's edge,
+ * shelving smoothly down to the full depth across the outer part of the
+ * pond, flat in the middle. The same profile shapes the visible basin
+ * (Pond.tsx) and the height the player stands at (floorHeightAt), so
+ * feet land on the bed you see.
+ */
+export function pondDepthAt(x: number, z: number): number {
+  const r = Math.hypot(x - POND_CENTER[0], z - POND_CENTER[1]);
+  return pondDepthAtRadius(r);
+}
+
+export function pondDepthAtRadius(r: number): number {
+  const edge = POND_WATER_RADIUS + 0.04;
+  const bed = POND_WATER_RADIUS * 0.55;
+  if (r >= edge) return 0;
+  const t = Math.min(1, (edge - r) / (edge - bed));
+  return -POND_DEPTH * t * t * (3 - 2 * t);
+}
+export const CORRIDOR: Rect = { minX: -2.6, maxX: 2.6, minZ: -10, maxZ: -4 };
+
+/**
+ * The meadow beyond the garden's back edge: open ground you can walk out
+ * onto, kept clear of trees (Outdoors.tsx), with the campsite in it. Its
+ * edge is invisible but sits inside the treeline, so the trees mark it.
+ * Not in ROOMS. It lies sunk below the garden: a stone retaining wall
+ * along the garden's back edge, steps down through the middle of it
+ * (GARDEN_STEPS), and grass banks rising to the outer ground round its
+ * other edges (meadowHeight). Outdoors.tsx draws its ground.
+ */
+export const FIELD: Rect = { minX: -24, maxX: 24, minZ: 38, maxZ: 72 };
+export const FIELD_Y = -0.6;
+/** The outer ground's height, beyond the meadow and round the building. */
+export const OUTER_GROUND_Y = -0.06;
+/** How wide the grass banks are, from the meadow floor up to the outer
+ *  ground, at the meadow's sides, its far end, and beside the garden. */
+export const MEADOW_BANK = 3;
+/** The steps down from the garden: centred on x, from the garden's back
+ *  edge, four risers of 0.15 m with three treads between. */
+export const GARDEN_STEPS = { x: 0, halfWidth: 1.5, z: 38, tread: 0.4, risers: 4 };
+const STEPS_RUN = GARDEN_STEPS.tread * (GARDEN_STEPS.risers - 1);
+/** The retaining wall's end walls: beside the garden the meadow's front
+ *  edge is a bank rather than a wall, and these close the gap between. */
+export const MEADOW_WING = { x: 10, width: 0.6 };
+/** The campfire, the campsite's centre: far enough out that the garden
+ *  is a short walk away, clear of the turbines other worlds stand beyond
+ *  the garden (Seizora's, at x = ±7, z = 45 to 47). */
+export const CAMPFIRE: [number, number] = [-11, 58];
+/** The tent, west of the fire, its door facing it. */
+export const TENT = { x: CAMPFIRE[0] - 4.1, z: CAMPFIRE[1] + 0.7, length: 2.7, width: 2.7, height: 1.65 };
+/** Low folding chairs round the fire: each at `angle` round it (0 is the
+ *  +Z side), facing it. */
+export const CAMP_CHAIR_RADIUS = 1.9;
+export const CAMP_CHAIRS = [0.4, 1.6, 2.8, -2.75].map((angle) => ({
+  angle,
+  x: CAMPFIRE[0] + Math.sin(angle) * CAMP_CHAIR_RADIUS,
+  z: CAMPFIRE[1] + Math.cos(angle) * CAMP_CHAIR_RADIUS,
+  // Facing the fire: an avatar at yaw y faces (-sin y, -cos y).
+  rotationY: angle,
+}));
+/** A camp chair's seat is lower than a bench's. */
+export const CAMP_SEAT_HEIGHT = 0.33;
+/** The tent's yaw: its local +Z, the door, faces the fire. */
+export const TENT_YAW = Math.atan2(CAMPFIRE[0] - TENT.x, CAMPFIRE[1] - TENT.z);
+/** A point in the tent's own frame (+Z toward the door), in the world. */
+export function tentPoint(x: number, z: number): [number, number] {
+  const c = Math.cos(TENT_YAW);
+  const s = Math.sin(TENT_YAW);
+  return [TENT.x + x * c + z * s, TENT.z - x * s + z * c];
+}
+/** The two sleeping bags in the tent, in its frame: side by side (`xs`),
+ *  the pillows at the back, and the height of their tops. */
+export const SLEEPING_BAG = { xs: [-0.58, 0.58], z: -0.2, length: 1.68, top: 0.12, pillowZ: -1.0 };
+/** Just outside the tent's door, where you stand on getting up, and where
+ *  every world puts you on arrival (each world.json's spawnPoint), as if
+ *  you'd just woken up. */
+export const TENT_DOORSTEP = tentPoint(0, TENT.length / 2 + 0.75);
+export const CLASSROOM: Rect = { minX: -9, maxX: 9, minZ: -24, maxZ: -10 };
+export const ROOMS: Rect[] = [HALL, OUTDOOR, CORRIDOR, CLASSROOM];
+
+export const WALL_HEIGHT = 4.2;
+export const WALL_THICKNESS = 0.3;
+export const CLASSROOM_WALL_HEIGHT = 3.4;
+/** Width of the openings between hall, corridor and classroom. */
+export const DOOR_HALF_WIDTH = CORRIDOR.maxX;
+/** How far a hall doorway's casing posts reach in from the opening's edge
+ *  (DoorCasing in BaseEnvironment.tsx). Here so collision and the garden
+ *  door's hinges agree on the clear width. */
+export const DOOR_CASING_INNER = 0.29;
+/** Clear half-width of a cased hall doorway, between its posts. */
+export const DOOR_CLEAR_HALF = DOOR_HALF_WIDTH - DOOR_CASING_INNER;
+
+/** Chair and bench seat height. The sit clip drops the hips by the same
+ *  amount (see scripts/generate-motions.mjs), so feet reach the floor. */
+export const SEAT_HEIGHT = 0.45;
+/** Eye height while seated, for the first-person camera. */
+export const SEATED_EYE_HEIGHT = 1.15;
+
+/** Keeps a walker off the walls and out of the furniture. */
+const PLAYER_RADIUS = 0.4;
+/** The third-person camera is allowed closer to a wall than the player is,
+ *  but still not through it. */
+export const CAMERA_RADIUS = 0.25;
+
+export interface Seat {
+  id: string;
+  /** Floor position the avatar sits at. */
+  position: [number, number, number];
+  /** Yaw the avatar faces while seated. */
+  rotationY: number;
+  label: string;
+  /** What you do there: sit (the default), or lie down, on a bed. Lying,
+   *  `position` is where the hips go, on the bed's surface, and the head
+   *  lies behind it. */
+  pose?: "sit" | "lie";
+  /** How far above `position` the surface is, for the click target.
+   *  Default SEAT_HEIGHT. */
+  surfaceHeight?: number;
+  /** Where getting up leaves you, when beside the seat (standUpSpot) is
+   *  the wrong place: out of a tent's door rather than through its wall. */
+  exit?: [number, number];
+}
+
+const inset = (rect: Rect, by: number): Rect => ({
+  minX: rect.minX + by,
+  maxX: rect.maxX - by,
+  minZ: rect.minZ + by,
+  maxZ: rect.maxZ - by,
+});
+
+const contains = (rect: Rect, x: number, z: number) => x >= rect.minX && x <= rect.maxX && z >= rect.minZ && z <= rect.maxZ;
+
+// Insetting every room by the player's radius would leave a gap at each
+// doorway, and the clamp would then push a player back and forth across it
+// instead of letting them through. The corridor is therefore stretched past
+// both openings by enough to overlap the rooms it joins, while the rooms
+// themselves stay fully inset so nobody can stand inside a wall.
+const CORRIDOR_MOUTH = WALL_THICKNESS / 2 + PLAYER_RADIUS;
+const WALKABLE: Rect[] = [
+  inset(HALL, PLAYER_RADIUS),
+  {
+    ...inset(OUTDOOR, PLAYER_RADIUS),
+    // Stops short of the hall's south wall like every other room. It used
+    // to reach back over the wall across the garden's whole width, to let
+    // people through the entrance, and that made the entire wall
+    // walkable, not only the doorway.
+    minZ: HALL.maxZ + WALL_THICKNESS / 2 + PLAYER_RADIUS,
+  },
+  // The entrance itself: the same "mouth" the corridor has, only as wide
+  // as the gap between the door casing's posts, reaching into the hall's
+  // and the garden's walkable areas on either side.
+  {
+    minX: -(DOOR_CLEAR_HALF - PLAYER_RADIUS),
+    maxX: DOOR_CLEAR_HALF - PLAYER_RADIUS,
+    minZ: HALL.maxZ - CORRIDOR_MOUTH,
+    maxZ: HALL.maxZ + CORRIDOR_MOUTH,
+  },
+  {
+    ...inset(CORRIDOR, PLAYER_RADIUS),
+    minZ: CORRIDOR.minZ - CORRIDOR_MOUTH,
+    maxZ: CORRIDOR.maxZ + CORRIDOR_MOUTH,
+  },
+  inset(CLASSROOM, PLAYER_RADIUS),
+  {
+    ...inset(FIELD, PLAYER_RADIUS),
+    // Overlaps the garden's walkable area, which ends a radius short of
+    // their shared edge: there's no wall between them.
+    minZ: OUTDOOR.maxZ - PLAYER_RADIUS - 0.1,
+  },
+];
+
+// --- the beach --------------------------------------------------------------
+
+/**
+ * The beach past the meadow's east side, part of Seiza's grounds in every
+ * world built on them (src/scene/Beach.tsx draws it). Its shape lives here, with the
+ * rest of the grounds, because walking, the grass's edge (Outdoors.tsx), and
+ * the drawing all follow it.
+ */
+export const SHORE = {
+  /** The sea's level. */
+  seaY: -0.22,
+  /** How far down the sand, from its top, the water starts. */
+  toWater: 12,
+};
+
+/** Where the sand starts at `z`: a gently wandering line a little past the
+ *  meadow's east edge. */
+export function coastX(z: number): number {
+  return 34 + 4 * Math.sin(z * 0.021) + 2 * Math.sin(z * 0.057 + 1.3);
+}
+
+/** The sand's height `d` metres seaward from its top: a gentle slope to the
+ *  water, then on down under it. */
+export function shoreY(d: number): number {
+  return d <= SHORE.toWater ? OUTER_GROUND_Y - ((OUTER_GROUND_Y - SHORE.seaY) * d) / SHORE.toWater : SHORE.seaY - 0.025 * (d - SHORE.toWater);
+}
+
+/** Where you can walk out of the meadow and down the beach: beside the
+ *  meadow, as far as wading in the shallows. */
+const SHORE_WALK: Rect = { minX: FIELD.maxX - PLAYER_RADIUS - 0.1, maxX: 52, minZ: FIELD.minZ + 2, maxZ: FIELD.maxZ - 2 };
+const WALKABLE_WITH_SHORE: Rect[] = [...WALKABLE, SHORE_WALK];
+let shore = false;
+
+/** Opens the beach to walking (Beach.tsx, while it's there). */
+export function setShore(on: boolean): void {
+  shore = on;
+}
+
+const onShore = (x: number, z: number) => shore && x > FIELD.maxX && contains(SHORE_WALK, x, z);
+
+/**
+ * Pulls a position back into the walkable floor plan. Replaces the old
+ * circular bounds clamp: with two rooms, a circle would either cut off the
+ * corners or let players walk out through the walls. The union of the room
+ * rectangles also means the only way between the rooms is the corridor.
+ */
+export function clampToRooms(position: THREE.Vector3, margin = 0): void {
+  // A world made of its own model has no rooms to stay in: walking is the
+  // ground's (see setGround), and the camera goes where it likes.
+  if (ground) return;
+  const walkable = shore ? WALKABLE_WITH_SHORE : WALKABLE;
+  for (const room of walkable) {
+    if (contains(inset(room, -margin), position.x, position.z)) return;
+  }
+  let best: { x: number; z: number; distance: number } | null = null;
+  for (const room of walkable) {
+    const bounds = inset(room, -margin);
+    const x = THREE.MathUtils.clamp(position.x, bounds.minX, bounds.maxX);
+    const z = THREE.MathUtils.clamp(position.z, bounds.minZ, bounds.maxZ);
+    const distance = (x - position.x) ** 2 + (z - position.z) ** 2;
+    if (!best || distance < best.distance) best = { x, z, distance };
+  }
+  if (best) {
+    position.x = best.x;
+    position.z = best.z;
+  }
+}
+
+// --- seating ---------------------------------------------------------------
+
+/** Benches face the tatami platform at the centre of the hall. */
+export const HALL_CENTRE: [number, number] = [0, 5];
+export const BENCH_COUNT = 6;
+export const BENCH_RADIUS = 6.4;
+export const BENCH_LENGTH = 2.2;
+
+export interface BenchPlacement {
+  position: [number, number, number];
+  rotationY: number;
+}
+
+export const BENCHES: BenchPlacement[] = Array.from({ length: BENCH_COUNT }, (_, i) => {
+  // Three-quarter ring, open toward the hall entrance so the room reads as
+  // "come in and sit down" rather than a closed circle.
+  const angle = Math.PI * 0.32 + (i / (BENCH_COUNT - 1)) * Math.PI * 1.36;
+  const x = HALL_CENTRE[0] + Math.cos(angle) * BENCH_RADIUS;
+  const z = HALL_CENTRE[1] + Math.sin(angle) * BENCH_RADIUS;
+  // An avatar faces -Z at yaw 0, so facing the middle of the hall means
+  // pointing -(toward centre): atan2 of the vector from the centre outward.
+  return { position: [x, 0, z], rotationY: Math.atan2(x - HALL_CENTRE[0], z - HALL_CENTRE[1]) };
+});
+
+/** Benches in the garden, also registered as real seats below. */
+export const OUTDOOR_BENCHES: BenchPlacement[] = [
+  { position: [-5.2, 0, 23.5], rotationY: -0.16 },
+  { position: [5.2, 0, 23.5], rotationY: 0.16 },
+];
+
+/** The garden's two lampposts, in its front corners: clear of the benches,
+ *  the pond, and the doorway, and of the exhibits other worlds build in
+ *  the back half (Seizora's solar rows, battery, and boards). */
+export const GARDEN_LAMPS: [number, number][] = [
+  [-8.3, 20.6],
+  [8.3, 20.6],
+];
+
+export const CLASSROOM_ROWS = 3;
+export const CLASSROOM_COLUMNS = 4;
+// Wide enough that a person fits between the rows: a desk and its chair
+// together are about 1.2m deep, and a walker needs 0.8m of clear floor.
+export const DESK_SPACING_X = 2.4;
+export const DESK_SPACING_Z = 2.35;
+export const CLASSROOM_FRONT_Z = -22.4; // chalkboard wall side
+export const BOARD_Z = CLASSROOM.minZ + WALL_THICKNESS / 2;
+
+export interface DeskPlacement {
+  /** Desk position; the chair sits `CHAIR_OFFSET` behind it. */
+  position: [number, number, number];
+  row: number;
+  column: number;
+}
+
+export const CHAIR_OFFSET = 0.78;
+
+export const DESKS: DeskPlacement[] = Array.from({ length: CLASSROOM_ROWS * CLASSROOM_COLUMNS }, (_, i) => {
+  const row = Math.floor(i / CLASSROOM_COLUMNS);
+  const column = i % CLASSROOM_COLUMNS;
+  const x = (column - (CLASSROOM_COLUMNS - 1) / 2) * DESK_SPACING_X;
+  const z = CLASSROOM_FRONT_Z + 2.6 + row * DESK_SPACING_Z;
+  return { position: [x, 0, z], row, column };
+});
+
+// Far enough from the board that the chair behind it doesn't intersect the
+// chalk tray.
+export const TEACHER_DESK: [number, number, number] = [-3.4, 0, CLASSROOM_FRONT_Z + 0.2];
+
+/**
+ * How far forward of the seat's middle an avatar actually sits. Sitting a
+ * body exactly on the centre of the seat buries its back in the backrest,
+ * which is the clipping you see on any chair that isn't a stool. Wider than
+ * a bare anatomical fit needs, because clothing (a skirt, a long coat) has
+ * no cloth simulation and doesn't fold the way a real seated person's does —
+ * it stays roughly rigid, so it needs the extra clearance from the backrest
+ * that a real garment would find for itself.
+ */
+const SEAT_FORWARD_OFFSET = 0.17;
+
+/**
+ * The same idea for a chair placed through the editor, but smaller.
+ *
+ * A bench is deep and backless, so sitting well forward on one looks
+ * right. A placed chair is a shallower seat with a backrest much closer
+ * behind, and reusing the bench's 0.17 put the avatar on the very front
+ * lip of it — perched rather than seated. Half that still clears the
+ * backrest while leaving the body over the seat.
+ */
+const PLACED_CHAIR_FORWARD_OFFSET = 0.08;
+
+/** Unit vector an avatar at this yaw faces (avatars face -Z at yaw 0). */
+export function facingVector(rotationY: number): [number, number] {
+  return [-Math.sin(rotationY), -Math.cos(rotationY)];
+}
+
+const seatAt = (x: number, z: number, rotationY: number): [number, number, number] => {
+  const [fx, fz] = facingVector(rotationY);
+  return [x + fx * SEAT_FORWARD_OFFSET, 0, z + fz * SEAT_FORWARD_OFFSET];
+};
+
+/**
+ * The seat belonging to a chair a player placed themselves in Edit Mode.
+ *
+ * Built exactly the way the room's own seats are — forward of the chair's
+ * centre by SEAT_FORWARD_OFFSET, for the same backrest-clearance reason —
+ * with one addition. The sitting pose is grounded to SEAT_HEIGHT above
+ * whatever floor the seat reports (see the grounding pass in
+ * AvatarAnimator.tsx), so a chair that has been scaled up has to report a
+ * proportionally higher floor, or its occupant sits in mid-air below the
+ * cushion. The id is the object's, so occupancy highlighting works without
+ * a second registry.
+ */
+/** How far the hips lie from the middle of the pillow, so the head rests
+ *  on it, for a typical VRoid avatar. */
+export const LIE_HIPS_FROM_PILLOW = 0.53;
+
+/** A place to lie down: the hips at (x, z) on a surface at height `top`,
+ *  facing `rotationY` (the feet that way, the head behind). */
+export function bedSeat(
+  id: string,
+  [x, z]: [number, number],
+  top: number,
+  rotationY: number,
+  label: string,
+  exit: [number, number]
+): Seat {
+  return { id, position: [x, top, z], rotationY, label, pose: "lie", surfaceHeight: 0, exit };
+}
+
+/** A bed placed in Edit Mode (Bed.tsx): its pillow end at local +Z, so
+ *  whoever lies in it faces -Z like a sitter, and they get up at its side. */
+export const BED = { length: 2, width: 1, top: 0.5, pillowZ: 0.68 };
+export function placedBedSeat(id: string, position: [number, number, number], rotationY: number, scale = 1): Seat {
+  const [fx, fz] = facingVector(rotationY);
+  // Behind the facing direction is toward the pillow; the side is the
+  // facing turned a quarter.
+  const back = (BED.pillowZ - LIE_HIPS_FROM_PILLOW) * scale;
+  const side = (BED.width / 2 + 0.45) * scale;
+  return bedSeat(
+    id,
+    [position[0] - fx * back, position[2] - fz * back],
+    position[1] + BED.top * scale,
+    rotationY,
+    "Bed",
+    [position[0] - fz * side, position[2] + fx * side]
+  );
+}
+
+export function placedChairSeat(
+  id: string,
+  position: [number, number, number],
+  rotationY: number,
+  scale = 1
+): Seat {
+  const [fx, fz] = facingVector(rotationY);
+  return {
+    id,
+    position: [
+      position[0] + fx * PLACED_CHAIR_FORWARD_OFFSET * scale,
+      position[1] + SEAT_HEIGHT * (scale - 1),
+      position[2] + fz * PLACED_CHAIR_FORWARD_OFFSET * scale,
+    ],
+    rotationY,
+    label: "Chair",
+  };
+}
+
+/**
+ * Every seat a player can sit on. Avatars face -Z at yaw 0 (see
+ * VrmAvatar.tsx), so a seat facing the -Z end of the classroom has yaw 0.
+ */
+export const SEATS: Seat[] = [
+  ...BENCHES.flatMap((bench, i) => {
+    const alongX = Math.cos(bench.rotationY);
+    const alongZ = -Math.sin(bench.rotationY);
+    return [-1, 1].map((side) => ({
+      id: `bench-${i}-${side > 0 ? "r" : "l"}`,
+      position: seatAt(
+        bench.position[0] + alongX * side * BENCH_LENGTH * 0.25,
+        bench.position[2] + alongZ * side * BENCH_LENGTH * 0.25,
+        bench.rotationY
+      ),
+      rotationY: bench.rotationY,
+      label: "Bench",
+    }));
+  }),
+  ...OUTDOOR_BENCHES.flatMap((bench, i) => {
+    const alongX = Math.cos(bench.rotationY);
+    const alongZ = -Math.sin(bench.rotationY);
+    return [-1, 1].map((side) => ({
+      id: `outdoor-bench-${i}-${side > 0 ? "r" : "l"}`,
+      position: seatAt(
+        bench.position[0] + alongX * side * BENCH_LENGTH * 0.25,
+        bench.position[2] + alongZ * side * BENCH_LENGTH * 0.25,
+        bench.rotationY
+      ),
+      rotationY: bench.rotationY,
+      label: "Garden bench",
+    }));
+  }),
+  ...DESKS.map((desk) => ({
+    id: `desk-${desk.row}-${desk.column}`,
+    // Students face the board, which is at the -Z end of the classroom.
+    position: seatAt(desk.position[0], desk.position[2] + CHAIR_OFFSET, 0),
+    rotationY: 0,
+    label: `Desk, row ${desk.row + 1}`,
+  })),
+  {
+    id: "teacher",
+    position: seatAt(TEACHER_DESK[0], TEACHER_DESK[2] - CHAIR_OFFSET, Math.PI),
+    rotationY: Math.PI, // facing the class
+    label: "Teacher's chair",
+  },
+  ...CAMP_CHAIRS.map((chair, i) => {
+    const [fx, fz] = facingVector(chair.rotationY);
+    return {
+      id: `camp-chair-${i}`,
+      // The sitting pose rests SEAT_HEIGHT above the seat's floor, so a
+      // lower seat reports a floor that much lower (see placedChairSeat).
+      position: [
+        chair.x + fx * PLACED_CHAIR_FORWARD_OFFSET,
+        FIELD_Y + CAMP_SEAT_HEIGHT - SEAT_HEIGHT,
+        chair.z + fz * PLACED_CHAIR_FORWARD_OFFSET,
+      ] as [number, number, number],
+      rotationY: chair.rotationY,
+      label: "Camp chair",
+    };
+  }),
+  ...SLEEPING_BAG.xs.map((x, i) =>
+    bedSeat(
+      `camp-bed-${i}`,
+      tentPoint(x, SLEEPING_BAG.pillowZ + LIE_HIPS_FROM_PILLOW),
+      FIELD_Y + SLEEPING_BAG.top,
+      // Facing the door: feet toward it, head on the pillow at the back.
+      TENT_YAW + Math.PI,
+      "Sleeping bag",
+      TENT_DOORSTEP
+    )
+  ),
+];
+
+// --- furniture collision ----------------------------------------------------
+
+/** An axis-aligned box in its own frame, rotated about Y in the world. */
+export interface Obstacle {
+  x: number;
+  z: number;
+  halfX: number;
+  halfZ: number;
+  rotationY: number;
+  /** The floor it stands on, for a building with storeys: it only blocks
+   *  a walker on that floor. Absent means every floor (Seiza's own rooms
+   *  have one). */
+  floorY?: number;
+  /** True while this obstacle shouldn't block anyone — an open door's
+   *  footprint, most often. A plain mutable field rather than something
+   *  reactive on purpose: resolveObstacles runs once a frame from
+   *  PlayerRig's useFrame loop, so the door component that owns this
+   *  obstacle just flips this directly (see GardenDoor / ClassroomDoor in
+   *  BaseEnvironment.tsx) the same way moveTargetRef and touchInput.ts
+   *  are written to outside of React state, for the same reason: no
+   *  React render is needed for something the physics loop reads 60
+   *  times a second anyway. */
+  disabled?: boolean;
+}
+
+const obstacle = (x: number, z: number, halfX: number, halfZ: number, rotationY = 0): Obstacle => ({
+  x,
+  z,
+  halfX,
+  halfZ,
+  rotationY,
+});
+
+/** The garden door's closed-state footprint (see GardenDoor in
+ *  BaseEnvironment.tsx) — spans the doorway at the hall's south wall.
+ *  Exported (not just an anonymous entry below) so GardenDoor can flip
+ *  `.disabled` on the exact same object that's already sitting in
+ *  OBSTACLES, rather than needing a second lookup/id scheme. */
+export const GARDEN_DOOR_OBSTACLE: Obstacle = obstacle(0, HALL.maxZ - 0.18, DOOR_HALF_WIDTH - 0.05, 0.22);
+
+/** The garden door's two leaves where they stand when swung open: into
+ *  the hall, along each side of the doorway from its hinge (see
+ *  GardenDoor). Disabled while the door is shut, and the closed-state box
+ *  above disabled while it's open, so one or the other is always solid. */
+const GARDEN_LEAF_LENGTH = DOOR_CLEAR_HALF;
+const GARDEN_HINGE_Z = HALL.maxZ - 0.22;
+export const GARDEN_DOOR_OPEN_OBSTACLES: Obstacle[] = [-1, 1].map((side) => ({
+  ...obstacle(side * (DOOR_CLEAR_HALF - 0.04), GARDEN_HINGE_Z - GARDEN_LEAF_LENGTH / 2, 0.08, GARDEN_LEAF_LENGTH / 2),
+  disabled: true,
+}));
+
+/** The new sliding door's closed-state footprint, at the corridor→
+ *  classroom threshold (see ClassroomDoor in BaseEnvironment.tsx). */
+// Kept in sync by hand with ClassroomDoor's own DOOR_INSET in
+// BaseEnvironment.tsx (0.18) rather than importing it, to avoid a
+// layout.ts → BaseEnvironment.tsx → layout.ts import cycle; if you
+// change one, change the other.
+// Matches ClassroomDoor (BaseEnvironment.tsx): a pocket door running down
+// the middle of the wall, covering the full opening when closed.
+export const CLASSROOM_DOOR_OBSTACLE: Obstacle = obstacle(0, CLASSROOM.maxZ, DOOR_HALF_WIDTH, WALL_THICKNESS / 2);
+
+/** Rocks left out of the pond's ring, so there are obvious places to step in. */
+const POND_ROCK_GAPS = new Set([3, 4, 11, 12]);
+
+/**
+ * The rocks round the pond's rim, relative to POND_CENTER. Shared by Pond.tsx
+ * (which draws them) and OBSTACLES (which keeps you from walking through
+ * them), so the two can't drift apart.
+ */
+export const POND_ROCKS = Array.from({ length: 16 }, (_, i) => {
+  const angle = (i / 16) * Math.PI * 2 + Math.sin(i * 7.3) * 0.08;
+  const size = 0.3 + ((i * 37) % 10) / 70;
+  const ring = POND_RADIUS - 0.12;
+  return { i, angle, size, x: Math.cos(angle) * ring, z: Math.sin(angle) * ring, squash: 0.5 + ((i * 13) % 5) / 25, turn: i * 1.7, material: i % 3 };
+}).filter((rock) => !POND_ROCK_GAPS.has(rock.i));
+
+/**
+ * Furniture players bump into instead of walking through. Deliberately a
+ * short list of boxes rather than real physics: it costs one loop per frame,
+ * needs no extra dependency, and covers everything in the built-in world
+ * that is big enough to walk into.
+ */
+export const OBSTACLES: Obstacle[] = [
+  GARDEN_DOOR_OBSTACLE,
+  ...GARDEN_DOOR_OPEN_OBSTACLES,
+  CLASSROOM_DOOR_OBSTACLE,
+  ...BENCHES.map((bench) => obstacle(bench.position[0], bench.position[2], BENCH_LENGTH / 2 + 0.05, 0.32, bench.rotationY)),
+  // The outdoor benches were never added here — only the indoor ones —
+  // which is exactly why they had no collision at all.
+  ...OUTDOOR_BENCHES.map((bench) => obstacle(bench.position[0], bench.position[2], BENCH_LENGTH / 2 + 0.05, 0.32, bench.rotationY)),
+  ...GARDEN_LAMPS.map(([x, z]) => obstacle(x, z, 0.2, 0.2)),
+  // A desk and its chair are one obstacle, not two. As separate boxes the
+  // gap between them is narrower than a person, so a walker got squeezed
+  // back and forth between the pair instead of walking around them.
+  ...DESKS.map((desk) => obstacle(desk.position[0], desk.position[2] + CHAIR_OFFSET / 2, 0.58, 0.62)),
+  obstacle(TEACHER_DESK[0], TEACHER_DESK[2] - CHAIR_OFFSET / 2, 0.95, 0.62),
+  obstacle(-7, 13.4, 1.8, 0.45), // reception desk
+  // The garden pond itself has no collision on purpose: you can wade in.
+  // Its depth comes from floorHeightAt (pondDepthAt) instead. The rocks
+  // round its rim do, as one small box each; the gaps between them are
+  // where you step in.
+  ...POND_ROCKS.map((rock) => obstacle(POND_CENTER[0] + rock.x, POND_CENTER[1] + rock.z, rock.size * 0.75, rock.size * 0.75)),
+  // The campsite: the fire's stone ring, the tent, and the camp chairs.
+  obstacle(CAMPFIRE[0], CAMPFIRE[1], 0.62, 0.62),
+  obstacle(TENT.x, TENT.z, TENT.width / 2, TENT.length / 2, TENT_YAW),
+  ...CAMP_CHAIRS.map((chair) => obstacle(chair.x, chair.z, 0.27, 0.27, chair.rotationY)),
+  // The garden's back edge: a low stone curb along the top of the meadow's
+  // retaining wall, open where the steps go down, and the wall's end walls.
+  ...[-1, 1].map((side) => {
+    const inner = GARDEN_STEPS.halfWidth;
+    const half = (OUTDOOR.maxX - inner) / 2;
+    return obstacle(GARDEN_STEPS.x + side * (inner + half), OUTDOOR.maxZ - 0.15, half, 0.15);
+  }),
+  ...[-1, 1].map((side) =>
+    obstacle(side * (MEADOW_WING.x + MEADOW_WING.width / 2), FIELD.minZ + MEADOW_BANK / 2, MEADOW_WING.width / 2, MEADOW_BANK / 2)
+  ),
+  // Shoe lockers down one side of the corridor.
+  obstacle(CORRIDOR.minX + 0.36, (CORRIDOR.minZ + CORRIDOR.maxZ) / 2 + 0.3, 0.22, 2.4),
+  // Lantern posts and planters in the hall.
+  ...[
+    [-8.6, 0.8],
+    [8.6, 0.8],
+    [-8.6, 12.2],
+    [8.6, 12.2],
+  ].map(([x, z]) => obstacle(x, z, 0.22, 0.22)),
+  ...[
+    [-10.6, 15],
+    [10.6, 15],
+    [-10.6, -2.4],
+    [10.6, -2.4],
+  ].map(([x, z]) => obstacle(x, z, 0.5, 0.5)),
+];
+
+/**
+ * The obstacle set collision is currently resolved against.
+ *
+ * OBSTACLES above describes the *built-in* room, by hand. A deployment
+ * that layers its own uploaded .glb over it (see sceneUrl in
+ * worldConfig.ts) brings in geometry this file has never seen and which
+ * therefore has no collision. So the active set is swappable: Scene.tsx
+ * sets it to the built-in list plus boxes derived from that model, and
+ * back to the built-in list alone when the model is cleared.
+ *
+ * Deliberately a module-level mutable rather than React state, for the
+ * same reason `Obstacle.disabled` is: resolveObstacles runs from
+ * PlayerRig's useFrame loop, which reads this directly and must not
+ * re-render to see a change.
+ */
+let activeObstacles: Obstacle[] = OBSTACLES;
+
+export { obstacle as makeObstacle };
+
+export function setActiveObstacles(next: Obstacle[] | null): void {
+  activeObstacles = next ?? OBSTACLES;
+}
+
+export function getActiveObstacles(): readonly Obstacle[] {
+  return activeObstacles;
+}
+
+/** Furniture a world's own code adds (see src/worlds/WorldExtension.tsx),
+ *  kept apart from the room's so neither replaces the other. */
+let worldObstacles: Obstacle[] = [];
+
+export function setWorldObstacles(next: Obstacle[]): void {
+  worldObstacles = next;
+}
+
+/** Scenery that comes and goes with a world's settings, such as the
+ *  seasonal tree (src/scene/Seasons.tsx). Built-in rooms only. */
+let sceneryObstacles: Obstacle[] = [];
+
+export function setSceneryObstacles(next: Obstacle[]): void {
+  sceneryObstacles = next;
+}
+
+/** Furniture people placed in the room (src/edit/WorldObjects.tsx): only
+ *  tables, each on its own floor. See placedObstacles in App.tsx. */
+let placedObstacles: Obstacle[] = [];
+
+export function setPlacedObstacles(next: Obstacle[]): void {
+  placedObstacles = next;
+}
+
+/**
+ * Derives collision boxes from arbitrary loaded geometry.
+ *
+ * Produces one axis-aligned box per mesh from its world bounding box,
+ * which is crude but is exactly the model `resolveObstacles` already
+ * works in, costs nothing per frame beyond the box count, and — unlike
+ * steering purely by navmesh — keeps walking behaving identically in the
+ * built-in room and a custom one.
+ *
+ * Meshes are skipped when they are:
+ *  - low enough to walk over (rugs, thresholds, floor plates),
+ *  - tall but starting above head height (ceilings, beams, hanging lights),
+ *  - enormous (the floor or a skybox shell, which would otherwise wrap
+ *    the whole world in one box nobody can enter),
+ *  - or marked `navIgnore`, the same opt-out the navmesh builder honours.
+ */
+export function deriveObstaclesFromObject(root: THREE.Object3D): Obstacle[] {
+  const MIN_HEIGHT = 0.25; // shorter than this, you step over it
+  const MAX_FLOOR_CLEARANCE = 1.9; // starts above this, you walk under it
+  const MAX_FOOTPRINT = 40; // metres; bigger than this is the ground, not furniture
+  const MIN_FOOTPRINT = 0.12;
+
+  const derived: Obstacle[] = [];
+  const box = new THREE.Box3();
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+
+  root.updateMatrixWorld(true);
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    if (child instanceof THREE.SkinnedMesh) return; // avatars move; they aren't scenery
+    if (!child.visible || child.userData.navIgnore === true) return;
+
+    box.setFromObject(child);
+    if (box.isEmpty()) return;
+    box.getSize(size);
+    box.getCenter(center);
+
+    if (size.y < MIN_HEIGHT) return;
+    if (box.min.y > MAX_FLOOR_CLEARANCE) return;
+    if (size.x > MAX_FOOTPRINT || size.z > MAX_FOOTPRINT) return;
+    if (size.x < MIN_FOOTPRINT && size.z < MIN_FOOTPRINT) return;
+
+    derived.push(obstacle(center.x, center.z, size.x / 2, size.z / 2));
+  });
+
+  return derived;
+}
+
+/**
+ * Pushes a walker out of any furniture they've walked into, along whichever
+ * axis of that piece they're least far inside — the cheap, stable way to
+ * resolve a box overlap without a physics engine.
+ */
+export function resolveObstacles(position: THREE.Vector3, radius = PLAYER_RADIUS): void {
+  // The built-in room's furniture isn't there in a model world.
+  if (!ground) {
+    pushOutOf(activeObstacles, position, radius);
+    pushOutOf(sceneryObstacles, position, radius);
+  }
+  pushOutOf(worldObstacles, position, radius);
+  pushOutOf(placedObstacles, position, radius, ground ? undefined : floorHeightAt(position.x, position.z));
+}
+
+// --- a world's own ground ------------------------------------------------------
+
+/**
+ * Where people can walk in a world made of its own model (world.json
+ * `environment: "model"`), instead of the built-in floor plan above: a
+ * baked navigation mesh (src/nav/navGround.ts). With one set, the built-in
+ * rooms' bounds, furniture, floor heights, and ceilings stop applying, and
+ * walkers are moved along the ground's surface, up its stairs and ramps and
+ * through its doorways, by constrainWalker.
+ */
+export interface Ground {
+  /** Moves a walker from where it last stood toward `position` without
+   *  leaving the walkable surface, writing where it ends up into
+   *  `position`'s x and z, and returns the floor height there. */
+  constrain(position: THREE.Vector3): number;
+  /** The floor height near (x, z), on the level the walker is on. */
+  floorAt(x: number, z: number): number;
+  /** Whether a walker could stand at (x, z) on its current level. */
+  isWalkable(x: number, z: number): boolean;
+  /** Moves the walker to a spot at once (a spawn, a warp, a seat), on the
+   *  level nearest `y`. Returns the floor height there. */
+  place(x: number, y: number, z: number): number;
+  /** Keeps a third-person camera at `camera` on this side of any wall
+   *  between it and `from` (the walker), moving it in front of the wall. */
+  limitView?(from: THREE.Vector3, camera: THREE.Vector3): void;
+  /** Whether (x, z) is under cover at about height `y`: a floor or a roof
+   *  above it. For keeping rain out of buildings. */
+  covered?(x: number, y: number, z: number): boolean;
+}
+
+let ground: Ground | null = null;
+
+export function setGround(next: Ground | null): void {
+  ground = next;
+}
+
+export function getGround(): Ground | null {
+  return ground;
+}
+
+/**
+ * Keeps a walker on walkable floor and out of furniture: the built-in
+ * floor plan and its obstacles, or a model world's ground. Returns the
+ * floor height where the walker ends up.
+ */
+export function constrainWalker(position: THREE.Vector3): number {
+  if (ground) {
+    const floor = ground.constrain(position);
+    pushOutOf(worldObstacles, position, PLAYER_RADIUS);
+    pushOutOf(placedObstacles, position, PLAYER_RADIUS, floor);
+    return floor;
+  }
+  clampToRooms(position);
+  resolveObstacles(position);
+  return floorHeightAt(position.x, position.z);
+}
+
+function pushOutOf(obstacles: readonly Obstacle[], position: THREE.Vector3, radius: number, floorY?: number): void {
+  for (const box of obstacles) {
+    if (box.disabled) continue; // an open door — nothing to bump into here right now
+    // On another storey: a table upstairs doesn't block the hall below.
+    if (box.floorY !== undefined && floorY !== undefined && Math.abs(box.floorY - floorY) > 1.2) continue;
+    const sin = Math.sin(box.rotationY);
+    const cos = Math.cos(box.rotationY);
+    const dx = position.x - box.x;
+    const dz = position.z - box.z;
+    // Into the box's own frame.
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+    const overlapX = box.halfX + radius - Math.abs(localX);
+    const overlapZ = box.halfZ + radius - Math.abs(localZ);
+    if (overlapX <= 0 || overlapZ <= 0) continue;
+
+    let pushX = 0;
+    let pushZ = 0;
+    if (overlapX < overlapZ) pushX = Math.sign(localX || 1) * overlapX;
+    else pushZ = Math.sign(localZ || 1) * overlapZ;
+    // Back into world space.
+    position.x += pushX * cos + pushZ * sin;
+    position.z += -pushX * sin + pushZ * cos;
+  }
+}
+
+/** True if a walker of this radius would be inside a wall or some furniture. */
+export function isBlocked(x: number, z: number, radius = PLAYER_RADIUS): boolean {
+  if (ground) return !ground.isWalkable(x, z);
+  const probe = new THREE.Vector3(x, 0, z);
+  clampToRooms(probe);
+  if (probe.distanceTo(new THREE.Vector3(x, 0, z)) > 1e-4) return true;
+  resolveObstacles(probe, radius);
+  return probe.distanceTo(new THREE.Vector3(x, 0, z)) > 1e-4;
+}
+
+/**
+ * Where a player ends up when they get off a seat.
+ *
+ * Standing straight up would leave them inside the chair, and a fixed step
+ * backward works for a bench but walks a student into the desk behind them.
+ * So: try behind, then either side, then in front, and take the first spot
+ * that is actually free.
+ */
+export function standUpSpot(position: [number, number, number], rotationY: number): [number, number, number] {
+  const [fx, fz] = facingVector(rotationY);
+  const norm = (dx: number, dz: number): [number, number] => {
+    const length = Math.hypot(dx, dz) || 1;
+    return [dx / length, dz / length];
+  };
+  const directions: [number, number][] = [
+    [-fx, -fz], // behind the seat
+    [-fz, fx], // to one side
+    [fz, -fx], // to the other
+    norm(-fx - fz, -fz + fx), // and the diagonals between them
+    norm(-fx + fz, -fz - fx),
+    [fx, fz], // in front, as a last resort
+  ];
+  for (const distance of [0.85, 1.2, 1.6]) {
+    for (const [dx, dz] of directions) {
+      const x = position[0] + dx * distance;
+      const z = position[2] + dz * distance;
+      if (!isBlocked(x, z)) return [x, position[1], z];
+    }
+  }
+  return [position[0] - fx * 0.85, position[1], position[2] - fz * 0.85];
+}
+
+// --- floor height -----------------------------------------------------------
+
+/** The tatami platform is a real step up, so walking onto it should raise
+ *  the player rather than sink them into it. */
+export const TATAMI = {
+  minX: HALL_CENTRE[0] - 4.5,
+  maxX: HALL_CENTRE[0] + 4.5,
+  minZ: HALL_CENTRE[1] - 3.5,
+  maxZ: HALL_CENTRE[1] + 3.5,
+  height: 0.13,
+};
+
+/** Out on the meadow, past the garden deck. */
+const inField = (x: number, z: number) => contains(FIELD, x, z) && !contains(OUTDOOR, x, z);
+
+/** On the steps down from the garden. */
+const onSteps = (x: number, z: number) =>
+  Math.abs(x - GARDEN_STEPS.x) <= GARDEN_STEPS.halfWidth && z >= GARDEN_STEPS.z && z <= GARDEN_STEPS.z + STEPS_RUN + GARDEN_STEPS.tread;
+
+/**
+ * The meadow's ground: its floor at FIELD_Y, rising over MEADOW_BANK to the
+ * outer ground at its sides and far end, and beside the garden, where its
+ * front edge isn't the retaining wall. Eased at both ends, so a bank rolls
+ * rather than kinks. Shared by the floor you walk on and the ground drawn.
+ */
+export function meadowHeight(x: number, z: number): number {
+  let t = Math.min(x - FIELD.minX, FIELD.maxX - x, FIELD.maxZ - z) / MEADOW_BANK;
+  if (Math.abs(x) > MEADOW_WING.x) t = Math.min(t, (z - FIELD.minZ) / MEADOW_BANK);
+  t = THREE.MathUtils.clamp(t, 0, 1);
+  return THREE.MathUtils.lerp(OUTER_GROUND_Y, FIELD_Y, t * t * (3 - 2 * t));
+}
+
+export function floorHeightAt(x: number, z: number): number {
+  if (ground) return ground.floorAt(x, z);
+  if (contains(TATAMI, x, z)) return TATAMI.height;
+  // The steps walk as an even slope from the deck to the meadow, which
+  // their noses sit on, so going down them is smooth rather than a jolt
+  // per step.
+  if (onSteps(x, z)) return (FIELD_Y * (z - GARDEN_STEPS.z)) / (STEPS_RUN + GARDEN_STEPS.tread);
+  if (inField(x, z)) return meadowHeight(x, z);
+  // Grass up to the sand, then down the beach, and a little way into the
+  // shallows: wading, not swimming.
+  if (onShore(x, z)) return Math.max(shoreY(Math.max(0, x - coastX(z))), SHORE.seaY - 0.15);
+  return pondDepthAt(x, z);
+}
+
+/** What a footstep at this point should sound like (see audio/sfx.ts). */
+export type FloorSurface = "wood" | "tatami" | "water" | "stone" | "grass";
+
+export function surfaceAt(x: number, z: number): FloorSurface {
+  if (ground) return "stone";
+  // Water first: the pond sits inside the garden, so its own test has to
+  // win over the outdoor default underneath it.
+  if (Math.hypot(x - POND_CENTER[0], z - POND_CENTER[1]) <= POND_WATER_RADIUS) return "water";
+  if (contains(TATAMI, x, z)) return "tatami";
+  if (onShore(x, z)) return x - coastX(z) > SHORE.toWater ? "water" : "grass";
+  // The garden is gravel and stepping stones rather than floorboards.
+  if (contains(OUTDOOR, x, z) || onSteps(x, z)) return "stone";
+  if (inField(x, z)) return "grass";
+  return "wood";
+}
+
+/**
+ * How high the third-person camera may rise before it would be looking at
+ * the room from above. The hall has an open beam ceiling rather than a solid
+ * one, so without this the camera simply floated out over the top of the
+ * walls and showed a roofless set.
+ */
+/**
+ * Whether rain reaches (x, z) at about height `y`: not inside the hall, the
+ * corridor, or the classroom, or, in a model world, under a floor or a
+ * roof its ground knows about.
+ */
+export function sheltered(x: number, y: number, z: number): boolean {
+  if (ground) return ground.covered?.(x, y, z) ?? false;
+  return contains(HALL, x, z) || contains(CORRIDOR, x, z) || contains(CLASSROOM, x, z);
+}
+
+export function ceilingHeightAt(x: number, z: number): number {
+  // A model world's buildings aren't known here: no ceiling for the camera.
+  if (ground) return Infinity;
+  if (contains(CLASSROOM, x, z)) return CLASSROOM_WALL_HEIGHT - 0.25;
+  if (contains(CORRIDOR, x, z)) return 2.95;
+  // Open sky over the garden and the meadow: the camera may rise to look
+  // down on the campsite (the hall's walls are WALL_HEIGHT; over the
+  // garden it used to share their limit, which only mattered indoors).
+  if (inField(x, z) || onShore(x, z)) return 9;
+  return WALL_HEIGHT - 0.5;
+}

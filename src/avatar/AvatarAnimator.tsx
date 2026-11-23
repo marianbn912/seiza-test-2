@@ -1,0 +1,1113 @@
+import { useEffect, useRef, type MutableRefObject } from "react";
+import { useFrame } from "@react-three/fiber";
+import { useFacialExpressions } from "./useFacialExpressions";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import {
+  VRMAnimationLoaderPlugin,
+  VRMLookAtQuaternionProxy,
+  createVRMAnimationClip,
+  type VRMAnimation,
+} from "@pixiv/three-vrm-animation";
+import { VRMHumanBoneList, type VRM, type VRMHumanBoneName } from "@pixiv/three-vrm";
+import { LOCOMOTION_CLIPS } from "./builtinMotions.generated";
+import type { GestureDefinition, GroundContact } from "./gestures";
+import { SEAT_HEIGHT } from "../scene/layout";
+import { playClap, playFootstep, playWaterRipple } from "../audio/sfx";
+import { surfaceAt } from "../scene/layout";
+import { CROUCH_GESTURE_NAME, GESTURE_SOUND_TIMES } from "./gestures";
+import { viewerPosition } from "../xr/viewer";
+
+/** The viewer's eyes in the world (see viewerPosition). */
+const scratchEye = new THREE.Vector3();
+
+/**
+ * Drives every avatar's body animation from VRM Animation clips, in three
+ * layers that never fight each other:
+ *
+ * 1. Locomotion — idle / walk / run, blended by actual ground speed.
+ * 2. Posture — a held full-body pose, currently sitting. It stays until
+ *    released, so a seated player who waves doesn't stand up.
+ * 3. Gestures — layered on top. An upper-body gesture (wave, clap…) leaves
+ *    the legs to whatever is underneath, so you can wave while walking or
+ *    while sitting. A full-body gesture (seiza) takes over both halves.
+ *
+ * Each clip is split into upper- and lower-body halves so a layer can win
+ * one half and yield the other. Weights per bone always add up to 1: the
+ * VRM rest pose is a T-pose by specification, so any gap in the blend
+ * shows up as the arms snapping outward.
+ *
+ * A gesture marked `hold` clamps on its final frame instead of finishing —
+ * holding the key keeps the pose, and the key can't be spammed into a
+ * restart loop. Releasing it (the `gesture` prop going null) fades it out.
+ *
+ * Walk and run are phase-locked and advanced by ground speed, so feet don't
+ * skate when speed changes or when the two clips crossfade.
+ *
+ * Finally, poses that rest on something (see GroundContact) are settled onto
+ * it per avatar, because no baked clip can be right for every body — that's
+ * the second useFrame pass at the bottom of this file.
+ */
+
+/** Bones that get offsets added after the mixer (gaze, doze, tremble, and
+ *  the arm fit). */
+const ADDITIVE_BONES = ["spine", "chest", "neck", "head", "leftUpperArm", "rightUpperArm"] as const;
+/** A bone's pose before our offsets, and as we left it after them. */
+interface AdditiveBase {
+  base: THREE.Quaternion;
+  left: THREE.Quaternion;
+  valid: boolean;
+}
+
+const animationCache = new Map<string, Promise<VRMAnimation>>();
+
+export function loadVrmAnimation(url: string): Promise<VRMAnimation> {
+  let pending = animationCache.get(url);
+  if (!pending) {
+    pending = new Promise<VRMAnimation>((resolve, reject) => {
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+      loader.load(
+        url,
+        (gltf) => {
+          const animation = (gltf.userData.vrmAnimations as VRMAnimation[] | undefined)?.[0];
+          if (animation) resolve(animation);
+          else reject(new Error(`${url} contains no VRM animation`));
+        },
+        undefined,
+        reject
+      );
+    });
+    // A failed load shouldn't be cached forever — let the next request retry.
+    pending.catch(() => animationCache.delete(url));
+    animationCache.set(url, pending);
+  }
+  return pending;
+}
+
+const LOWER_BODY_BONES = new Set<VRMHumanBoneName>([
+  "hips",
+  "leftUpperLeg", "leftLowerLeg", "leftFoot", "leftToes",
+  "rightUpperLeg", "rightLowerLeg", "rightFoot", "rightToes",
+]);
+
+const WALK_SPEED = 3.2; // m/s the walk clip was authored for
+const RUN_SPEED = 6.1;
+/** How much of a step's volume survives a crouched walk. */
+const CROUCH_STEP_GAIN = 0.4;
+
+const WALK_STRIDE = 3.2; // meters travelled per walk cycle
+const RUN_STRIDE = 3.9;
+const GESTURE_FADE_IN = 0.2;
+const GESTURE_FADE_OUT = 0.3;
+const POSTURE_FADE_RATE = 7; // sitting down and standing up ease in/out
+const MAX_DELTA = 1 / 20;
+
+/** Bones that can be the lowest point of a pose resting on the floor. */
+const FLOOR_CONTACT_BONES: VRMHumanBoneName[] = [
+  "leftToes", "rightToes",
+  "leftFoot", "rightFoot",
+  "leftLowerLeg", "rightLowerLeg",
+];
+/** For a pose lying down ("body"), every part that can rest on the
+ *  surface, with its distance from the joint to the skin at reference
+ *  scale: the back and the back of the head are well behind their joints. */
+const BODY_CONTACT_BONES: [VRMHumanBoneName, number][] = [
+  ...FLOOR_CONTACT_BONES.map((name): [VRMHumanBoneName, number] => [name, 0.05]),
+  ["hips", 0.11],
+  ["spine", 0.11],
+  ["chest", 0.11],
+  ["head", 0.1],
+];
+/** Hips height of the skeleton the built-in clips were authored against. */
+const REFERENCE_HIPS_HEIGHT = 0.95;
+/** How far the shoulder joint sits from the middle of the body, as a share
+ *  of the arm's length, on the bodies the built-in clips were tuned on
+ *  (VRoid's: 0.109 m against a 0.435 m arm). */
+const REFERENCE_SHOULDER_SHARE = 0.25;
+/** The most the arm fit moves a hand inward, at reference scale. */
+const MAX_ARM_FIT = 0.08;
+/** Distance from a shin or ankle joint to the skin, at reference scale. */
+const LIMB_RADIUS = 0.05;
+/** Distance from the hip joint down to the part that meets the cushion. */
+const HIP_TO_SEAT = 0.19;
+/** How fast the grounding offset chases its target. Fast enough to keep up
+ *  with sitting down, slow enough that a noisy frame doesn't pop the body. */
+const GROUND_SETTLE_RATE = 14;
+
+/**
+ * Retargeting a clip onto one avatar is the expensive part of playing a
+ * gesture, so it happens once per avatar per clip and is kept.
+ *
+ * It used to happen on every single trigger, and the cost was worse than it
+ * looked: when an avatar has no VRMLookAtQuaternionProxy,
+ * `createVRMAnimationClip` builds one and adds it to the avatar's scene, so
+ * every gesture click also permanently grew the scene graph. Playing with
+ * the gesture menu for a minute left a visibly slower page behind.
+ */
+interface ClipBundle {
+  full: THREE.AnimationClip;
+  upper: THREE.AnimationClip;
+  lower: THREE.AnimationClip;
+}
+
+interface SplitActions {
+  upper: THREE.AnimationAction;
+  lower: THREE.AnimationAction;
+}
+
+interface LocomotionState extends SplitActions {
+  duration: number;
+  weight: number;
+}
+
+interface PostureState extends SplitActions {
+  url: string;
+  weight: number;
+  ground: GroundContact;
+  /** False once released: weight eases to 0, then the actions stop. */
+  active: boolean;
+}
+
+interface GestureLayer {
+  url: string;
+  action: THREE.AnimationAction;
+  duration: number;
+  fullBody: boolean;
+  hold: boolean;
+  ground: GroundContact;
+  weight: number;
+  /** Set when a newer gesture replaces this one, or a hold is released. */
+  fadingOut: boolean;
+}
+
+interface AnimatorState {
+  vrm: VRM;
+  mixer: THREE.AnimationMixer;
+  idle: LocomotionState | null;
+  walk: LocomotionState | null;
+  run: LocomotionState | null;
+  /** Held while airborne — see the vertical-velocity estimate around the
+   *  ground-speed block below. Free-running like idle (not phase-locked
+   *  to ground speed the way walk/run are), since a jump's timing has
+   *  nothing to do with how fast you were moving horizontally. */
+  jump: LocomotionState | null;
+  posture: PostureState | null;
+  gestures: GestureLayer[];
+  /** Retargeted clips for this avatar, keyed by clip URL. */
+  clips: Map<string, ClipBundle>;
+  phase: number;
+  speed: number;
+  /** Smoothed vertical speed (m/s, signed), estimated from consecutive
+   *  getPosition() samples — see the jump-weight block. There's no
+   *  explicit "I am jumping" signal from PlayerRig or over the network
+   *  (the realtime protocol only carries position/rotation; see
+   *  ClientMessage's "state" in multiplayer/types.ts), so this is
+   *  inferred the same way for both the local avatar and everyone
+   *  else's, uniformly, rather than needing one precise path for
+   *  yourself and a second guessed one for remote players. */
+  verticalVelocity: number;
+  lastPosition: THREE.Vector3 | null;
+  /** What the pose currently showing is resting on, and how much of it is
+   *  blended in. Written by the animation pass, read by the grounding pass. */
+  groundMode: GroundContact;
+  groundWeight: number;
+  /** Metres the avatar is currently sunk (negative) or lifted to meet it. */
+  groundOffset: number;
+  /** Smoothed gaze angle, eased toward the networked headPitch. */
+  headPitch: number;
+  /** Rest hips height, so contact clearances scale with the body. */
+  scale: number;
+  /** How much wider than the reference this body's shoulders are, in
+   *  metres: how far the arm fit moves each hand inward (see measureArmFit). */
+  armFit: number;
+}
+
+/**
+ * Without this, three-vrm creates one per clip and adds it to the avatar,
+ * warning each time. Creating it once up front silences the warning and
+ * keeps repeated gestures from growing the scene.
+ */
+function ensureLookAtProxy(vrm: VRM) {
+  if (!vrm.lookAt) return;
+  if (vrm.scene.children.some((child) => child instanceof VRMLookAtQuaternionProxy)) return;
+  const proxy = new VRMLookAtQuaternionProxy(vrm.lookAt);
+  proxy.name = "VRMLookAtQuaternionProxy";
+  vrm.scene.add(proxy);
+}
+
+/**
+ * How big this avatar is relative to the skeleton the built-in clips were
+ * authored against, measured from the hips of the rest pose. Contact
+ * clearances (how thick a shin is, how far the hip joint sits above the
+ * cushion) are body-sized, not absolute, so everything the grounding pass
+ * measures is expressed as a multiple of this.
+ */
+function measureRestScale(vrm: VRM): number {
+  const hips = vrm.humanoid.getRawBoneNode("hips") ?? vrm.humanoid.getNormalizedBoneNode("hips");
+  if (!hips) return 1;
+  hips.updateWorldMatrix(true, false);
+  const height = new THREE.Vector3().setFromMatrixPosition(hips.matrixWorld).y - rootY(vrm);
+  // A metre-tall child avatar and a two-metre one are both plausible; a
+  // zero is not, and would divide the clearances away to nothing.
+  return height > 0.2 ? height / REFERENCE_HIPS_HEIGHT : 1;
+}
+
+/**
+ * How far in each hand should be moved so arm poses land where they were
+ * meant to on a broad-shouldered body.
+ *
+ * Clips store joint rotations, not hand positions. On a body whose
+ * shoulders sit further out (a realistic adult, as Avaturn's are, rather
+ * than VRoid's slimmer build), the same rotations carry each hand that much
+ * further out: arms that should hang at the sides splay, and hands that
+ * should meet in a clap stop short. The excess is the shoulder's distance
+ * from the spine beyond the reference share of this arm's length; zero for
+ * a body as narrow as the reference or narrower, which is left alone.
+ */
+export function measureArmFit(vrm: VRM, scale: number): number {
+  const position = (name: VRMHumanBoneName) => {
+    const node = vrm.humanoid.getRawBoneNode(name);
+    if (!node) return null;
+    node.updateWorldMatrix(true, false);
+    return vrm.scene.worldToLocal(new THREE.Vector3().setFromMatrixPosition(node.matrixWorld));
+  };
+  const hips = position("hips"), shoulder = position("leftUpperArm"), elbow = position("leftLowerArm"), hand = position("leftHand");
+  if (!hips || !shoulder || !elbow || !hand) return 0;
+  const arm = shoulder.distanceTo(elbow) + elbow.distanceTo(hand);
+  const excess = Math.abs(shoulder.x - hips.x) - REFERENCE_SHOULDER_SHARE * arm;
+  return THREE.MathUtils.clamp(excess, 0, MAX_ARM_FIT * scale);
+}
+
+const fitShoulder = new THREE.Vector3();
+const fitHand = new THREE.Vector3();
+const fitChest = new THREE.Quaternion();
+const fitParent = new THREE.Quaternion();
+const fitTurn = new THREE.Quaternion();
+const fitToChest = new THREE.Quaternion();
+const fitParentInverse = new THREE.Quaternion();
+const fitAxis = new THREE.Vector3();
+/** Each arm: which way is outward (+X is the avatar's left), and its bones. */
+const FIT_SIDES = [
+  [1, "leftUpperArm", "leftHand"],
+  [-1, "rightUpperArm", "rightHand"],
+] as const;
+
+/**
+ * Moves each hand inward by `amount`, by turning the upper arm about the
+ * chest's forward axis at the shoulder: the elbow and wrist keep their
+ * bend, and the hand travels on the arm's own arc. Applied in full when
+ * the arm moves across the body (hanging, raised, clapping) and faded out
+ * as it points forward, where a sideways turn would only swing it.
+ */
+export function fitArms(vrm: VRM, amount: number) {
+  const chest = vrm.humanoid.getNormalizedBoneNode("upperChest") ?? vrm.humanoid.getNormalizedBoneNode("chest") ?? vrm.humanoid.getNormalizedBoneNode("spine");
+  if (!chest) return;
+  chest.updateWorldMatrix(true, false);
+  chest.getWorldQuaternion(fitChest);
+  // Scratch values throughout: this runs every frame for every avatar, and
+  // allocates nothing.
+  const toChest = fitToChest.copy(fitChest).invert();
+  for (const [side, upperName, handName] of FIT_SIDES) {
+    const upper = vrm.humanoid.getNormalizedBoneNode(upperName);
+    const hand = vrm.humanoid.getNormalizedBoneNode(handName);
+    if (!upper || !hand || !upper.parent) continue;
+    hand.updateWorldMatrix(true, false);
+    upper.getWorldPosition(fitShoulder);
+    hand.getWorldPosition(fitHand);
+    // The arm in the chest's own frame: +X is the avatar's left, +Y up,
+    // +Z forward (a normalized VRM's rest axes).
+    const arm = fitHand.sub(fitShoulder).applyQuaternion(toChest);
+    const length = arm.length();
+    const across = Math.hypot(arm.x, arm.y);
+    if (length < 1e-4) continue;
+    // In full for an arm across the body, fading out as it points straight
+    // ahead (under about a quarter of its length across).
+    const weight = THREE.MathUtils.smoothstep(across / length, 0.25, 0.5);
+    if (weight <= 0) continue;
+    const x = arm.x - side * amount * weight;
+    if (Math.abs(x) >= across) continue;
+    const y = Math.sign(arm.y || -1) * Math.sqrt(across * across - x * x);
+    let angle = Math.atan2(y, x) - Math.atan2(arm.y, arm.x);
+    if (angle > Math.PI) angle -= 2 * Math.PI;
+    if (angle < -Math.PI) angle += 2 * Math.PI;
+    // The turn, about the chest's forward axis in world space, re-expressed
+    // in the upper arm's parent frame.
+    fitAxis.set(0, 0, 1).applyQuaternion(fitChest);
+    fitTurn.setFromAxisAngle(fitAxis, angle);
+    upper.parent.getWorldQuaternion(fitParent);
+    upper.quaternion.premultiply(fitParentInverse.copy(fitParent).invert().multiply(fitTurn).multiply(fitParent));
+  }
+}
+
+/** World Y of the group the avatar is parented to — i.e. where its feet are
+ *  meant to be. Everything the grounding pass measures is relative to it, so
+ *  it works the same for a player standing on a floor at any height. */
+function rootY(vrm: VRM): number {
+  const parent = vrm.scene.parent;
+  if (!parent) return 0;
+  parent.updateWorldMatrix(true, false);
+  return parent.matrixWorld.elements[13];
+}
+
+function getClipBundle(state: AnimatorState, url: string, animation: VRMAnimation): ClipBundle {
+  const cached = state.clips.get(url);
+  if (cached) return cached;
+  const full = createVRMAnimationClip(animation, state.vrm);
+  full.name = `seiza:${url}`;
+  const { upper, lower } = splitClip(full, state.vrm);
+  const bundle = { full, upper, lower };
+  state.clips.set(url, bundle);
+  return bundle;
+}
+
+export interface AvatarAnimatorProps {
+  vrm: VRM | null;
+  /** The avatar's current world position, read every frame to derive
+   *  ground speed. Omit for a stationary avatar (e.g. the preview). */
+  getPosition?: () => THREE.Vector3 | readonly [number, number, number];
+  gesture?: GestureDefinition | null;
+  /** Changes every time a gesture is triggered, so repeating the same
+   *  gesture replays it instead of being ignored as "no change". */
+  gestureSeq?: number;
+  onGestureEnd?: () => void;
+  /** Held full-body pose (sitting), or null when standing. */
+  posture?: GestureDefinition | null;
+  /** Inspection mode for the avatar preview: hold the T-pose. */
+  holdTPose?: boolean;
+  /** Overrides the face that would otherwise come from the active
+   *  gesture or posture. Used by the designer, where the point is to look
+   *  at an expression directly rather than wait for a gesture to use it. */
+  expression?: string | null;
+  /** Current mic RMS for whoever owns this avatar (see
+   *  useRealtimeMedia's speakingLevels). Drives lip sync; 0 or omitted
+   *  leaves the mouth closed. */
+  speakingLevel?: number;
+  /** Where this player is looking vertically, in radians (see headPitch
+   *  in multiplayer/types.ts). Applied to the neck and head so other
+   *  people can tell what someone is looking at. 0 is level. */
+  headPitch?: number;
+  /** Filled every frame with how much of this avatar the animation layers
+   *  currently own, so something layered on top — body tracking, in
+   *  src/xr/body — can step aside for a gesture instead of fighting it. */
+  layerWeightsRef?: MutableRefObject<AnimatorLayerWeights>;
+  /** Seiza endurance (seizaEndurance.ts): a slow nodding head while
+   *  dozing, and a shake through the upper body, 0 to 1, as the legs give
+   *  out. Layered over the pose like headPitch, so the posture holds. */
+  doze?: boolean;
+  tremble?: number;
+  /** Update every Nth frame instead of every frame (see RemotePlayers'
+   *  detail planner): for avatars far away or out of view. Time still
+   *  advances in full, so gestures and reactions keep their timing. */
+  updateEvery?: () => number;
+}
+
+/** See AvatarAnimatorProps.layerWeightsRef. Both 0 to 1. */
+export interface AnimatorLayerWeights {
+  /** A gesture clip is playing (wave, bow, crouch…). */
+  gesture: number;
+  /** A held posture is in (sitting, seiza). */
+  posture: number;
+  /** How far in a lying-down posture is (one grounded on the whole body,
+   *  ground: "body"): it owns the head and arms too, so a headset's
+   *  tracking gives way to it entirely. */
+  lying?: number;
+}
+
+function splitClip(clip: THREE.AnimationClip, vrm: VRM) {
+  const nodeToBone = new Map<string, VRMHumanBoneName>();
+  for (const bone of VRMHumanBoneList) {
+    const node = vrm.humanoid.getNormalizedBoneNode(bone);
+    if (node) nodeToBone.set(node.name, bone);
+  }
+  const upper: THREE.KeyframeTrack[] = [];
+  const lower: THREE.KeyframeTrack[] = [];
+  for (const track of clip.tracks) {
+    const bone = nodeToBone.get(track.name.slice(0, track.name.lastIndexOf(".")));
+    (bone && !LOWER_BODY_BONES.has(bone) ? upper : lower).push(track);
+  }
+  return {
+    upper: new THREE.AnimationClip(`${clip.name}:upper`, clip.duration, upper),
+    lower: new THREE.AnimationClip(`${clip.name}:lower`, clip.duration, lower),
+  };
+}
+
+const approach = (current: number, target: number, rate: number, delta: number) =>
+  current + (target - current) * (1 - Math.exp(-rate * delta));
+
+/** How fast the head eases toward a newly received gaze angle. */
+const HEAD_PITCH_RATE = 9;
+/** Fraction of the total bend taken by the neck; the head takes the rest. */
+const NECK_PITCH_SHARE = 0.45;
+
+export function AvatarAnimator({
+  vrm,
+  getPosition,
+  gesture = null,
+  gestureSeq = 0,
+  onGestureEnd,
+  posture = null,
+  holdTPose = false,
+  expression,
+  speakingLevel = 0,
+  headPitch = 0,
+  layerWeightsRef,
+  doze = false,
+  tremble = 0,
+  updateEvery,
+}: AvatarAnimatorProps) {
+  const dozeRef = useRef(doze);
+  dozeRef.current = doze;
+  const trembleRef = useRef(tremble);
+  trembleRef.current = tremble;
+  const moodRef = useRef({ doze: 0, tremble: 0, time: 0 });
+  /** How much of the upper body gestures hold this frame (pass 1 to 2). */
+  const gestureTakeoverRef = useRef(0);
+  const additiveBases = useRef(new Map<string, AdditiveBase>());
+  // A played gesture's face outranks a held posture's, so waving while
+  // seated shows the wave. An explicit `expression` prop outranks both.
+  /** How airborne this avatar currently is, 0..1 (see the jump weight). */
+  const airborneRef = useRef(0);
+  /** Distance from the camera, so sounds this avatar makes fade with
+   *  range the way its voice does. Updated in the frame loop. */
+  const distanceToCameraRef = useRef(0);
+  const activeExpression = expression !== undefined ? expression : (gesture?.expression ?? posture?.expression ?? null);
+  useFacialExpressions(vrm, activeExpression, speakingLevel, airborneRef);
+  const stateRef = useRef<AnimatorState | null>(null);
+  const updateEveryRef = useRef(updateEvery);
+  updateEveryRef.current = updateEvery;
+  /** Shared by both frame passes so they skip, and catch up, together. */
+  const throttleRef = useRef({ frame: 0, pending: 0, skip: false, delta: 0, every: 1 });
+  const getPositionRef = useRef(getPosition);
+  getPositionRef.current = getPosition;
+  const onGestureEndRef = useRef(onGestureEnd);
+  onGestureEndRef.current = onGestureEnd;
+  const headPitchRef = useRef(headPitch);
+  headPitchRef.current = headPitch;
+
+  // Per-avatar setup: mixer now, locomotion clips as soon as they load.
+  useEffect(() => {
+    if (!vrm) return;
+    ensureLookAtProxy(vrm);
+    const mixer = new THREE.AnimationMixer(vrm.scene);
+    const state: AnimatorState = {
+      vrm,
+      mixer,
+      idle: null,
+      walk: null,
+      run: null,
+      jump: null,
+      posture: null,
+      gestures: [],
+      clips: new Map(),
+      phase: 0,
+      speed: 0,
+      verticalVelocity: 0,
+      lastPosition: null,
+      groundMode: "none",
+      groundWeight: 0,
+      groundOffset: 0,
+      headPitch: 0,
+      scale: measureRestScale(vrm),
+      armFit: 0,
+    };
+    state.armFit = measureArmFit(vrm, state.scale);
+    stateRef.current = state;
+
+    // Hidden until idle is ready, so a freshly loaded avatar never flashes
+    // its rest T-pose for a frame or two.
+    vrm.scene.visible = false;
+    let cancelled = false;
+
+    const build = (animation: VRMAnimation, url: string, loop: boolean): LocomotionState => {
+      const { upper, lower } = getClipBundle(state, url, animation);
+      const make = (clip: THREE.AnimationClip) => {
+        const action = mixer.clipAction(clip);
+        action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+        action.setEffectiveWeight(0);
+        action.play();
+        return action;
+      };
+      return { upper: make(upper), lower: make(lower), duration: upper.duration, weight: 0 };
+    };
+
+    Promise.allSettled([
+      loadVrmAnimation(LOCOMOTION_CLIPS.idle),
+      loadVrmAnimation(LOCOMOTION_CLIPS.walk),
+      loadVrmAnimation(LOCOMOTION_CLIPS.run),
+      loadVrmAnimation(LOCOMOTION_CLIPS.jump),
+    ]).then(([idle, walk, run, jump]) => {
+      if (cancelled) return;
+      if (idle.status === "fulfilled") {
+        state.idle = build(idle.value, LOCOMOTION_CLIPS.idle, true);
+        state.idle.weight = 1;
+      } else {
+        console.warn("Idle animation failed to load; avatar will stand in its rest pose.", idle.reason);
+      }
+      if (walk.status === "fulfilled") state.walk = build(walk.value, LOCOMOTION_CLIPS.walk, true);
+      if (run.status === "fulfilled") state.run = build(run.value, LOCOMOTION_CLIPS.run, true);
+      // Missing entirely (load failure) just means no jump pose plays —
+      // falling back to idle/walk/run while airborne, same as this file
+      // already does for a missing walk/run above.
+      if (jump.status === "fulfilled") state.jump = build(jump.value, LOCOMOTION_CLIPS.jump, true);
+      for (const moving of [state.walk, state.run]) {
+        // Walk/run are positioned by hand from ground speed, not by clock.
+        if (moving) {
+          moving.upper.timeScale = 0;
+          moving.lower.timeScale = 0;
+        }
+      }
+      vrm.scene.visible = true;
+    });
+
+    return () => {
+      cancelled = true;
+      mixer.stopAllAction();
+      mixer.uncacheRoot(vrm.scene);
+      state.clips.clear();
+      vrm.humanoid.resetNormalizedPose();
+      vrm.scene.position.y = 0;
+      vrm.scene.visible = true;
+      if (stateRef.current === state) stateRef.current = null;
+    };
+  }, [vrm]);
+
+  // Start (or restart) a gesture whenever the sequence number changes —
+  // and only then. The seq seen at mount counts as already played, so a
+  // player who joins mid-gesture, or an avatar that finishes loading (or is
+  // swapped) after a gesture started, doesn't replay a stale one.
+  const gestureUrl = gesture?.url ?? null;
+  const gestureFullBody = gesture?.fullBody ?? false;
+  const gestureName = gesture?.name ?? null;
+  const gestureHold = gesture?.hold ?? false;
+  const gestureGround: GroundContact = gesture?.ground ?? "none";
+  const playedSeqRef = useRef(gestureSeq);
+  useEffect(() => {
+    if (playedSeqRef.current === gestureSeq) return;
+    if (!vrm || !gestureUrl) return;
+    // Sound for gestures that make one, scheduled against the clip's own
+    // impact times (GESTURE_SOUND_TIMES) rather than fired once at the
+    // start — a clap animation claps three times, and one sound at the
+    // top of it reads as broken audio. Keyed on the gesture's name, not
+    // its menu position, so reordering the menu cannot point this at the
+    // wrong clip. Runs for remote players too, so you hear others clap.
+    const soundTimes = gestureName ? GESTURE_SOUND_TIMES[gestureName] : undefined;
+    const soundTimers: number[] = [];
+    if (soundTimes) {
+      for (const at of soundTimes) {
+        soundTimers.push(
+          window.setTimeout(() => playClap(distanceToCameraRef.current), at * 1000)
+        );
+      }
+    }
+    let cancelled = false;
+    loadVrmAnimation(gestureUrl)
+      .then((animation) => {
+        const state = stateRef.current;
+        if (cancelled || !state || state.vrm !== vrm) return;
+        // Marked here, not when the effect starts, so React StrictMode's
+        // mount-cleanup-mount in development doesn't swallow the gesture.
+        playedSeqRef.current = gestureSeq;
+        const bundle = getClipBundle(state, gestureUrl, animation);
+        // Replaying the same gesture reuses its layer and rewinds it,
+        // rather than stacking a second copy of the same clip.
+        let layer = state.gestures.find((existing) => existing.url === gestureUrl);
+        if (!layer) {
+          layer = {
+            url: gestureUrl,
+            action: state.mixer.clipAction(bundle.full),
+            duration: bundle.full.duration,
+            fullBody: gestureFullBody,
+            hold: gestureHold,
+            ground: gestureGround,
+            weight: 0,
+            fadingOut: false,
+          };
+          state.gestures.push(layer);
+        }
+        layer.fullBody = gestureFullBody;
+        layer.hold = gestureHold;
+        layer.ground = gestureGround;
+        layer.fadingOut = false;
+        layer.action.setLoop(THREE.LoopOnce, 1);
+        layer.action.clampWhenFinished = true;
+        layer.action.reset();
+        layer.action.setEffectiveWeight(layer.weight);
+        layer.action.play();
+        for (const other of state.gestures) {
+          if (other !== layer) other.fadingOut = true;
+        }
+      })
+      .catch((error) => {
+        console.warn(`Gesture clip failed to load (${gestureUrl}):`, error);
+        if (cancelled) return;
+        playedSeqRef.current = gestureSeq;
+        onGestureEndRef.current?.();
+      });
+    return () => {
+      cancelled = true;
+      // Interrupting a gesture has to silence the rest of its sounds, or
+      // a clap cut short half a second in keeps clapping on its own.
+      for (const timer of soundTimers) window.clearTimeout(timer);
+    };
+  }, [vrm, gestureUrl, gestureFullBody, gestureHold, gestureGround, gestureSeq, gestureName]);
+
+  // Releasing a hold gesture: the key came up, or the player stood up.
+  useEffect(() => {
+    if (gestureUrl) return;
+    const state = stateRef.current;
+    if (!state) return;
+    for (const layer of state.gestures) {
+      if (layer.hold) layer.fadingOut = true;
+    }
+  }, [gestureUrl]);
+
+  // Posture: sit down, and stand back up when it clears.
+  const postureUrl = posture?.url ?? null;
+  const postureGroundRef = useRef<GroundContact>("none");
+  postureGroundRef.current = posture?.ground ?? "none";
+  const postureLoopRef = useRef(false);
+  postureLoopRef.current = posture?.loop === true;
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!vrm || !state) return;
+    if (!postureUrl) {
+      if (state.posture) state.posture.active = false;
+      return;
+    }
+    if (state.posture?.url === postureUrl) {
+      state.posture.active = true;
+      state.posture.ground = postureGroundRef.current;
+      return;
+    }
+    let cancelled = false;
+    loadVrmAnimation(postureUrl)
+      .then((animation) => {
+        const current = stateRef.current;
+        if (cancelled || !current || current.vrm !== vrm) return;
+        if (current.posture) {
+          current.posture.upper.stop();
+          current.posture.lower.stop();
+        }
+        const bundle = getClipBundle(current, postureUrl, animation);
+        // A dance keeps going while held; anything else (sitting, seiza)
+        // settles into its last frame and stays there.
+        const loop = postureLoopRef.current;
+        const make = (part: THREE.AnimationClip) => {
+          const action = current.mixer.clipAction(part);
+          action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+          action.clampWhenFinished = !loop;
+          action.setEffectiveWeight(0);
+          action.reset();
+          action.play();
+          return action;
+        };
+        current.posture = {
+          upper: make(bundle.upper),
+          lower: make(bundle.lower),
+          url: postureUrl,
+          weight: 0,
+          ground: postureGroundRef.current,
+          active: true,
+        };
+      })
+      .catch((error) => console.warn(`Posture clip failed to load (${postureUrl}):`, error));
+    return () => {
+      cancelled = true;
+    };
+  }, [vrm, postureUrl]);
+
+  // Negative priority: runs before VrmAvatar's vrm.update(), so the pose
+  // written here reaches the rendered skeleton in the same frame.
+  useFrame((frameState, frameDelta) => {
+    const state = stateRef.current;
+    if (!state) return;
+    // On a reduced update rate, accumulate the frames skipped and apply
+    // them as one step. The cap scales with the rate, so a far-off wave
+    // finishes on time rather than slowing down.
+    const throttle = throttleRef.current;
+    const every = Math.max(1, Math.round(updateEveryRef.current?.() ?? 1));
+    throttle.frame += 1;
+    throttle.pending += frameDelta;
+    if (every > 1 && throttle.frame % every !== 0) {
+      throttle.skip = true;
+      return;
+    }
+    throttle.skip = false;
+    throttle.every = every;
+    const rawDelta = throttle.pending;
+    throttle.pending = 0;
+    throttle.delta = rawDelta;
+    const delta = Math.min(rawDelta, MAX_DELTA * every);
+
+    if (holdTPose) {
+      state.vrm.humanoid.resetNormalizedPose();
+      state.groundWeight = 0;
+      return;
+    }
+
+    // ---- ground speed ------------------------------------------------------
+    const raw = getPositionRef.current?.();
+    if (raw) {
+      const position = raw instanceof THREE.Vector3 ? raw : new THREE.Vector3(raw[0], raw[1], raw[2]);
+
+      // Distance from the camera, so sounds this avatar makes fade with
+      // range the way its voice does.
+      distanceToCameraRef.current = viewerPosition(frameState.camera, scratchEye).distanceTo(position);
+
+      if (state.lastPosition && delta > 0) {
+        const instant = Math.hypot(position.x - state.lastPosition.x, position.z - state.lastPosition.z) / delta;
+        // A jump of more than ~25 m/s is a teleport (spawn, respawn,
+        // network correction) — not something to animate a sprint for.
+        if (instant < 25) state.speed = approach(state.speed, instant, 10, delta);
+        const verticalInstant = (position.y - state.lastPosition.y) / delta;
+        // Same teleport guard as horizontal speed above, so a respawn or a
+        // large network correction doesn't flash the jump pose.
+        if (Math.abs(verticalInstant) < 15) state.verticalVelocity = approach(state.verticalVelocity, verticalInstant, 18, delta);
+      }
+      state.lastPosition = (state.lastPosition ?? new THREE.Vector3()).copy(position);
+    } else {
+      state.speed = approach(state.speed, 0, 10, delta);
+      state.verticalVelocity = approach(state.verticalVelocity, 0, 10, delta);
+    }
+
+    // ---- locomotion blend -------------------------------------------------------
+    const moving = THREE.MathUtils.smoothstep(state.speed, 0.15, 0.7);
+    const running = THREE.MathUtils.smoothstep(state.speed, WALK_SPEED * 1.05, RUN_SPEED * 0.9);
+    // Above ~1.1 m/s of vertical speed is a jump's launch or its fall, not
+    // the small bob of walking over an uneven floor or up onto the tatami
+    // platform (see floorHeightAt in scene/layout.ts) — those settle in
+    // well under a second, gradually, while a jump's initial velocity
+    // (PlayerRig's JUMP_SPEED = 5 m/s) clears this with room to spare even
+    // after gravity has been eating into it for a few frames.
+    const jumpTarget = state.jump ? THREE.MathUtils.smoothstep(Math.abs(state.verticalVelocity), 1.1, 2.2) : 0;
+    const targets = { idle: 1 - moving, walk: moving * (1 - running), run: moving * running };
+    // Missing clips hand their share back to idle so weights still sum to 1.
+    if (!state.run) {
+      targets.walk += targets.run;
+      targets.run = 0;
+    }
+    if (!state.walk) {
+      targets.idle += targets.walk;
+      targets.walk = 0;
+    }
+    // Jump takes its share off the top of whatever idle/walk/run would
+    // otherwise sum to, rather than being a fourth independent weight, so
+    // the four always still sum to 1 between them.
+    targets.idle *= 1 - jumpTarget;
+    targets.walk *= 1 - jumpTarget;
+    targets.run *= 1 - jumpTarget;
+    for (const key of ["idle", "walk", "run"] as const) {
+      const loco = state[key];
+      if (loco) loco.weight = approach(loco.weight, targets[key], 8, delta);
+    }
+    if (state.jump) state.jump.weight = approach(state.jump.weight, jumpTarget, 8, delta);
+    // Mirrored into a ref the face reads. Jumping is a locomotion state
+    // inferred from vertical velocity, not a gesture, so it has no entry
+    // in the gesture→expression map; without this the one moment an
+    // avatar is most obviously *doing* something is the one moment its
+    // face stays blank.
+    airborneRef.current = state.jump ? state.jump.weight : 0;
+
+    if (moving > 0.001) {
+      const stride = THREE.MathUtils.lerp(WALK_STRIDE, RUN_STRIDE, running);
+      const previousPhase = state.phase;
+      state.phase = (state.phase + (Math.max(state.speed, 0.9) / stride) * delta) % 1;
+
+      // ---- footsteps ---------------------------------------------------
+      // Tied to the walk cycle, not to distance travelled. A fixed
+      // metres-per-step guess drifts against the clip — too frequent at
+      // some speeds, out of time at others, which reads as footsteps
+      // belonging to someone else. A cycle has two contacts, so a step is
+      // one crossing of phase 0 or 0.5, and that matches the animation at
+      // every speed by construction.
+      const crossed =
+        previousPhase < 0.5 !== state.phase < 0.5 || state.phase < previousPhase;
+      const grounded = !state.jump || state.jump.weight < 0.2;
+      if (crossed && grounded && state.speed > 0.4 && state.speed < 25) {
+        const here = getPositionRef.current?.();
+        if (here) {
+          const fx = here instanceof THREE.Vector3 ? here.x : here[0];
+          const fz = here instanceof THREE.Vector3 ? here.z : here[2];
+          const surface = surfaceAt(fx, fz);
+          // A crouched walk is a quiet one. Applied here rather than in
+          // sfx.ts so it reaches remote avatars too: crouch syncs like any
+          // other held gesture, so everyone hears everyone else's steps
+          // soften, not just their own.
+          const stepGain = gestureName === CROUCH_GESTURE_NAME ? CROUCH_STEP_GAIN : 1;
+          playFootstep(surface, distanceToCameraRef.current, stepGain);
+          // Wading disturbs the water audibly as well as visually, but
+          // quietly — it is a step in shallow water, not a dive.
+          if (surface === "water") playWaterRipple(0.25 * stepGain, distanceToCameraRef.current);
+        }
+      }
+    }
+    for (const loco of [state.walk, state.run]) {
+      if (!loco) continue;
+      loco.upper.time = state.phase * loco.duration;
+      loco.lower.time = state.phase * loco.duration;
+    }
+
+    // ---- posture ------------------------------------------------------------------
+    const postureLayer = state.posture;
+    let postureWeight = 0;
+    if (postureLayer) {
+      postureLayer.weight = approach(postureLayer.weight, postureLayer.active ? 1 : 0, POSTURE_FADE_RATE, delta);
+      postureWeight = postureLayer.weight;
+      if (!postureLayer.active && postureLayer.weight < 0.01) {
+        // Stopped, but the retargeted clip stays cached for the next sit.
+        postureLayer.upper.stop();
+        postureLayer.lower.stop();
+        state.posture = null;
+        postureWeight = 0;
+      }
+    }
+
+    // ---- gesture layers -----------------------------------------------------------
+    let upperTakeover = 0;
+    let gestureLowerTakeover = 0;
+    for (const layer of state.gestures) {
+      const remaining = layer.duration - layer.action.time;
+      // A hold gesture stays at full weight on its last frame; a one-shot
+      // fades out as it reaches the end.
+      const fadeOutCap = layer.fadingOut ? 0 : layer.hold ? 1 : THREE.MathUtils.clamp(remaining / GESTURE_FADE_OUT, 0, 1);
+      if (layer.fadingOut) {
+        layer.weight = Math.max(0, layer.weight - delta / GESTURE_FADE_IN);
+      } else {
+        layer.weight = Math.min(fadeOutCap, layer.weight + delta / GESTURE_FADE_IN);
+      }
+      upperTakeover += layer.weight;
+      if (layer.fullBody) gestureLowerTakeover += layer.weight;
+    }
+    upperTakeover = Math.min(1, upperTakeover);
+    gestureLowerTakeover = Math.min(1, gestureLowerTakeover);
+    gestureTakeoverRef.current = upperTakeover;
+    if (layerWeightsRef) {
+      layerWeightsRef.current.gesture = upperTakeover;
+      layerWeightsRef.current.posture = postureWeight;
+      layerWeightsRef.current.lying = state.posture?.ground === "body" ? postureWeight : 0;
+    }
+
+    const finished = state.gestures.filter(
+      (layer) => layer.weight <= 0 && (layer.fadingOut || (!layer.hold && layer.action.time >= layer.duration - 1e-3))
+    );
+    if (finished.length) {
+      for (const layer of finished) layer.action.stop();
+      const endedNaturally = finished.some((layer) => !layer.fadingOut);
+      state.gestures = state.gestures.filter((layer) => !finished.includes(layer));
+      if (endedNaturally && state.gestures.length === 0) onGestureEndRef.current?.();
+    }
+
+    // ---- apply weights --------------------------------------------------------
+    // Gestures win the upper body; the posture keeps whatever is left of it
+    // and always owns the lower body; locomotion gets the remainder.
+    const postureUpper = postureWeight * (1 - upperTakeover);
+    const lowerTakeover = Math.min(1, gestureLowerTakeover + postureWeight);
+    for (const loco of [state.idle, state.walk, state.run]) {
+      if (!loco) continue;
+      loco.upper.setEffectiveWeight(loco.weight * (1 - upperTakeover) * (1 - postureWeight));
+      loco.lower.setEffectiveWeight(loco.weight * (1 - lowerTakeover));
+    }
+    if (state.posture) {
+      state.posture.upper.setEffectiveWeight(postureUpper);
+      state.posture.lower.setEffectiveWeight(postureWeight);
+    }
+    for (const layer of state.gestures) layer.action.setEffectiveWeight(layer.weight);
+
+    // ---- what the pose is resting on ----------------------------------------------
+    // Whichever contact is most strongly blended in wins, so crossing from a
+    // chair into seiza hands the grounding over rather than fighting over it.
+    state.groundMode = "none";
+    state.groundWeight = 0;
+    const considerGround = (mode: GroundContact, weight: number) => {
+      if (mode === "none" || weight <= state.groundWeight) return;
+      state.groundMode = mode;
+      state.groundWeight = weight;
+    };
+    for (const layer of state.gestures) {
+      // Only a full-body clip moves the legs, so only it can change where
+      // the body meets the world; a wave while seated must not.
+      if (layer.fullBody) considerGround(layer.ground, layer.weight);
+    }
+    if (state.posture) considerGround(state.posture.ground, postureWeight * (1 - gestureLowerTakeover));
+
+    state.mixer.update(delta);
+  }, -1);
+
+  /**
+   * Settles a resting pose onto the world, once per frame, per avatar.
+   *
+   * Why this exists: a .vrma clip can only bake one hip height. VRM playback
+   * scales that translation by the avatar's own hips height, but leg length
+   * varies independently — two avatars with identical hips heights can have
+   * very different shins — so a kneeling pose that sits perfectly on the
+   * skeleton it was authored for hovers above the tatami on one upload and
+   * sinks through it on the next. No amount of re-authoring fixes that for
+   * every body; it has to be measured on the body that's actually there.
+   *
+   * So: measure where the posed skeleton's contact points ended up, and slide
+   * the whole model down (or up) until they're where they belong. The
+   * measurement already includes the offset applied last frame, which makes
+   * this a simple feedback loop — correct by the error, smooth it, repeat —
+   * that converges in a few frames and then holds still.
+   *
+   * This measures the raw bones as they stood after the *previous* frame's
+   * `vrm.update()` (VrmAvatar.tsx, priority 0) rather than this frame's —
+   * a one-frame lag that a smoothed offset never shows. That's deliberate:
+   * a render priority greater than zero tells react-three-fiber "I will call
+   * gl.render() myself", which switches the whole canvas to manual rendering
+   * and — since nothing here ever calls it — left every canvas in the app
+   * (this preview included) drawing nothing but its own clear color.
+   * Priority -1 keeps this on the same automatic footing as the pose layer
+   * above, just in its own pass.
+   */
+  useFrame(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    // Runs on exactly the frames the pose pass did, with the same step.
+    const throttle = throttleRef.current;
+    if (throttle.skip) return;
+    const { vrm } = state;
+    const delta = Math.min(throttle.delta, MAX_DELTA * throttle.every);
+
+    let target = 0;
+    if (!holdTPose && state.groundWeight > 0.001) {
+      const base = rootY(vrm);
+      const scale = state.scale;
+      let error: number | null = null;
+
+      if (state.groundMode === "floor") {
+        // Whatever is lowest is what's touching: shins in seiza, feet when
+        // sitting cross-legged, toes on the way in and out of both.
+        let lowest = Infinity;
+        for (const name of FLOOR_CONTACT_BONES) {
+          const node = vrm.humanoid.getRawBoneNode(name);
+          if (!node) continue;
+          node.updateWorldMatrix(true, false);
+          lowest = Math.min(lowest, node.matrixWorld.elements[13] - base);
+        }
+        if (Number.isFinite(lowest)) error = LIMB_RADIUS * scale - lowest;
+      } else if (state.groundMode === "body") {
+        // The same, over the whole body: kneeling, then sitting back, then
+        // lying flat on the back.
+        let lowestSkin = Infinity;
+        for (const [name, radius] of BODY_CONTACT_BONES) {
+          const node = vrm.humanoid.getRawBoneNode(name);
+          if (!node) continue;
+          node.updateWorldMatrix(true, false);
+          lowestSkin = Math.min(lowestSkin, node.matrixWorld.elements[13] - base - radius * scale);
+        }
+        if (Number.isFinite(lowestSkin)) error = -lowestSkin;
+      } else if (state.groundMode === "seat") {
+        const hips = vrm.humanoid.getRawBoneNode("hips");
+        if (hips) {
+          hips.updateWorldMatrix(true, false);
+          error = SEAT_HEIGHT + HIP_TO_SEAT * scale - (hips.matrixWorld.elements[13] - base);
+        }
+      }
+
+      if (error !== null) {
+        // Scaled by how much of the pose is blended in, so the correction
+        // arrives with the pose and is gone again by the time you stand.
+        target = (state.groundOffset + error) * state.groundWeight;
+        // A bad rig (mislabelled bones, a metre-off hips) can't drag the
+        // avatar somewhere absurd.
+        target = THREE.MathUtils.clamp(target, -0.9 * scale, 0.9 * scale);
+      }
+    }
+
+    state.groundOffset = approach(state.groundOffset, target, GROUND_SETTLE_RATE, delta);
+    if (Math.abs(state.groundOffset) < 1e-4) state.groundOffset = 0;
+    // The renderer refreshes world matrices from here on its own; writing the
+    // local position is enough.
+    vrm.scene.position.y = state.groundOffset;
+
+    // Everything below adds to the bones the mixer just posed. The mixer
+    // skips writing a bone whose blended value hasn't changed since last
+    // frame (a held gesture over a held posture), and adding to a value
+    // nobody reset piles one frame's offset on the last: the head rolled
+    // further every frame. So undo our own offset first wherever the
+    // mixer left the bone exactly as we did.
+    for (const name of ADDITIVE_BONES) {
+      const bone = vrm.humanoid.getNormalizedBoneNode(name);
+      if (!bone) continue;
+      let base = additiveBases.current.get(name);
+      if (!base) additiveBases.current.set(name, (base = { base: new THREE.Quaternion(), left: new THREE.Quaternion(), valid: false }));
+      if (base.valid && bone.quaternion.equals(base.left)) bone.quaternion.copy(base.base);
+      base.base.copy(bone.quaternion);
+    }
+
+    // --- arm fit ---------------------------------------------------------
+    // Broad shoulders carry every arm pose further out than it was made
+    // for (see measureArmFit); bring the hands back in.
+    if (!holdTPose && state.armFit > 0.002) fitArms(vrm, state.armFit);
+
+    // --- head gaze -----------------------------------------------------
+    // Applied last, on top of whatever the clips just wrote, so looking
+    // around composes with an animation instead of fighting it. Added to
+    // the bone's current rotation rather than assigned, for the same
+    // reason.
+    //
+    // Split across the neck and head so the bend is distributed the way
+    // a real one is; putting it all on the head snaps the chin to the
+    // chest. Smoothed because the source is a 5Hz network tick, and
+    // stepping straight to each new value visibly ratchets.
+    state.headPitch = approach(state.headPitch, headPitchRef.current, HEAD_PITCH_RATE, delta);
+    if (Math.abs(state.headPitch) > 1e-4) {
+      const neck = vrm.humanoid.getNormalizedBoneNode("neck");
+      const head = vrm.humanoid.getNormalizedBoneNode("head");
+      // Negated: a VRM faces +Z in its own space, so a positive camera
+      // pitch (looking up) is a negative rotation about X here.
+      if (neck) neck.rotation.x -= state.headPitch * NECK_PITCH_SHARE;
+      if (head) head.rotation.x -= state.headPitch * (1 - NECK_PITCH_SHARE);
+    }
+
+    // --- seiza endurance -------------------------------------------------
+    // Both ease in and out, so falling asleep is a slow droop and waking
+    // is not a snap. The nod is the familiar one: the head sinks forward,
+    // then jerks partway back up.
+    const mood = moodRef.current;
+    mood.time += delta;
+    // A gesture wakes the avatar for as long as it plays: a nod stacked on
+    // a bow put the chin through the chest.
+    mood.doze = approach(mood.doze, dozeRef.current ? 1 - gestureTakeoverRef.current : 0, 1.5, delta);
+    mood.tremble = approach(mood.tremble, trembleRef.current, 3, delta);
+    if (mood.doze > 0.01 || mood.tremble > 0.01) {
+      const neck = vrm.humanoid.getNormalizedBoneNode("neck");
+      const head = vrm.humanoid.getNormalizedBoneNode("head");
+      const spine = vrm.humanoid.getNormalizedBoneNode("spine");
+      const chest = vrm.humanoid.getNormalizedBoneNode("chest");
+      if (mood.doze > 0.01) {
+        const cycle = (mood.time % 3.2) / 3.2;
+        const sink = cycle < 0.7 ? cycle / 0.7 : 1 - (cycle - 0.7) / 0.3 * 0.6;
+        const droop = (0.22 + 0.16 * sink) * mood.doze;
+        // Positive x bows a VRM's head forward, the opposite of headPitch.
+        if (neck) neck.rotation.x += droop * 0.4;
+        if (head) head.rotation.x += droop * 0.6;
+      }
+      if (mood.tremble > 0.01) {
+        // Two incommensurate frequencies per axis read as a shiver rather
+        // than a wobble.
+        const a = mood.tremble * 0.035;
+        const w = mood.time;
+        if (spine) spine.rotation.z += a * Math.sin(w * 47) * 0.6;
+        if (chest) chest.rotation.x += a * Math.sin(w * 53 + 1.3) * 0.5;
+        if (head) {
+          head.rotation.z += a * Math.sin(w * 61 + 0.7);
+          head.rotation.y += a * Math.sin(w * 37 + 2.1) * 0.8;
+        }
+      }
+    }
+
+    // What we left, to recognise next frame whether the mixer wrote over it.
+    for (const name of ADDITIVE_BONES) {
+      const bone = vrm.humanoid.getNormalizedBoneNode(name);
+      const base = additiveBases.current.get(name);
+      if (!bone || !base) continue;
+      base.left.copy(bone.quaternion);
+      base.valid = true;
+    }
+  }, -1);
+
+  return null;
+}
